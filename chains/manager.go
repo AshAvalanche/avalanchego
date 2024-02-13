@@ -143,8 +143,6 @@ type ChainParameters struct {
 	VMID ids.ID
 	// The IDs of the feature extensions this chain is running.
 	FxIDs []ids.ID
-	// Invariant: Only used when [ID] is the P-chain ID.
-	CustomBeacons validators.Manager
 }
 
 type Chain struct {
