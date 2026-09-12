@@ -39,6 +39,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs/txstest"
 	"github.com/ava-labs/avalanchego/vms/platformvm/utxo"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 	"github.com/ava-labs/avalanchego/wallet/chain/p/wallet"
 )
 
@@ -102,7 +103,7 @@ func newEnvironment(t *testing.T, f upgradetest.Fork) *environment {
 	}
 	ctx.SharedMemory = msm
 
-	fx := defaultFx(clk, ctx.Log, isBootstrapped.Get())
+	fxs := defaultFxs(clk, ctx.Log, isBootstrapped.Get())
 
 	baseState := statetest.New(t, statetest.Config{
 		DB:           baseDB,
@@ -115,14 +116,15 @@ func newEnvironment(t *testing.T, f upgradetest.Fork) *environment {
 	lastAcceptedID = baseState.GetLastAccepted()
 
 	uptimes := uptime.NewManager(baseState, clk)
-	utxosVerifier := utxo.NewVerifier(ctx, clk, fx)
+	utxosVerifier := utxo.NewVerifier(ctx, clk, fxs)
 
 	backend := Backend{
 		Config:       config,
 		Ctx:          ctx,
 		Clk:          clk,
 		Bootstrapped: &isBootstrapped,
-		Fx:           fx,
+		Fx:           fxs.Default(),
+		Fxs:          fxs,
 		FlowChecker:  utxosVerifier,
 		Uptimes:      uptimes,
 	}
@@ -289,19 +291,28 @@ func (fvi *fxVMInt) Logger() logging.Logger {
 	return fvi.log
 }
 
-func defaultFx(clk *mockable.Clock, log logging.Logger, isBootstrapped bool) fx.Fx {
+// defaultFxs mirrors the collection the VM builds: secp256k1fx first, hence the
+// default, and warpfx claiming its own types. Tests wire the same dispatch the
+// node does, so a type resolving to the wrong extension fails here rather than
+// only in production.
+func defaultFxs(clk *mockable.Clock, log logging.Logger, isBootstrapped bool) *fx.Fxs {
 	fxVMInt := &fxVMInt{
 		registry: linearcodec.NewDefault(),
 		clk:      clk,
 		log:      log,
 	}
-	res := &secp256k1fx.Fx{}
-	if err := res.Initialize(fxVMInt); err != nil {
-		panic(err)
-	}
-	if isBootstrapped {
-		if err := res.Bootstrapped(); err != nil {
+	res := fx.NewFxs(
+		fx.Claim{ID: secp256k1fx.ID, Fx: &secp256k1fx.Fx{}},
+		fx.Claim{ID: warpfx.ID, Fx: &warpfx.Fx{}, Types: warpfx.Types()},
+	)
+	for _, claim := range res.All() {
+		if err := claim.Fx.Initialize(fxVMInt); err != nil {
 			panic(err)
+		}
+		if isBootstrapped {
+			if err := claim.Fx.Bootstrapped(); err != nil {
+				panic(err)
+			}
 		}
 	}
 	return res

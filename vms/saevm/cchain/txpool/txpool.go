@@ -216,7 +216,7 @@ func (p *Txpool) Add(tx *tx.Tx) error {
 	p.executionLock.RLock()
 	defer p.executionLock.RUnlock()
 
-	if err := tx.VerifyCredentials(p.snowCtx.SharedMemory); err != nil {
+	if _, err := tx.VerifyCredentials(p.snowCtx, p.snowCtx.SharedMemory); err != nil {
 		return fmt.Errorf("%w: %w", errVerifyCredentials, err)
 	}
 	if err := p.verifyOp(t.op); err != nil {

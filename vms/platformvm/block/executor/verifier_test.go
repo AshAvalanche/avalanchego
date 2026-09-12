@@ -34,6 +34,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/config"
+	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/genesis/genesistest"
 	"github.com/ava-labs/avalanchego/vms/platformvm/metrics"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
@@ -88,13 +89,18 @@ func newTestVerifier(t testing.TB, c testVerifierConfig) *verifier {
 			Upgrades: c.Upgrades,
 			Context:  c.Context,
 		})
-		clock = &mockable.Clock{}
-		fx    = &secp256k1fx.Fx{}
+		clock  = &mockable.Clock{}
+		secpFx = &secp256k1fx.Fx{}
 	)
-	require.NoError(fx.InitializeVM(&secp256k1fx.TestVM{
+	require.NoError(secpFx.InitializeVM(&secp256k1fx.TestVM{
 		Clk: *clock,
 		Log: logging.NoLog{},
 	}))
+
+	// secp256k1fx alone: this verifier never sees a warpfx output, and the
+	// TestVM above carries no codec registry for warpfx.Fx.Initialize to
+	// register into.
+	fxs := fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx})
 
 	return &verifier{
 		backend: &backend{
@@ -113,11 +119,12 @@ func newTestVerifier(t testing.TB, c testVerifierConfig) *verifier {
 			},
 			Ctx: c.Context,
 			Clk: clock,
-			Fx:  fx,
+			Fx:  fxs.Default(),
+			Fxs: fxs,
 			FlowChecker: utxo.NewVerifier(
 				c.Context,
 				clock,
-				fx,
+				fxs,
 			),
 			Bootstrapped: utils.NewAtomic(true),
 		},

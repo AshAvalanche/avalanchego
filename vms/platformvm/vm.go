@@ -39,6 +39,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/utxo"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 	"github.com/ava-labs/avalanchego/vms/txs/mempool"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 
 	snowmanblock "github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	blockbuilder "github.com/ava-labs/avalanchego/vms/platformvm/block/builder"
@@ -76,7 +77,7 @@ type VM struct {
 
 	state *state.State
 
-	fx            fx.Fx
+	fxs           *fx.Fxs
 	codecRegistry codec.Registry
 
 	// Bootstrapped remembers if this chain has finished bootstrapping or not
@@ -126,9 +127,19 @@ func (vm *VM) Initialize(
 
 	// Note: this codec is never used to serialize anything
 	vm.codecRegistry = linearcodec.NewDefault()
-	vm.fx = &secp256k1fx.Fx{}
-	if err := vm.fx.Initialize(vm); err != nil {
-		return err
+
+	// Order matters: the first claim is the default, the one every type no
+	// extension claims resolves to. Initialize is still called on each - it is
+	// the Fx's lifecycle, and what hands it this VM - but it no longer carries
+	// the dispatch, which comes from the claimed types below.
+	vm.fxs = fx.NewFxs(
+		fx.Claim{ID: secp256k1fx.ID, Fx: &secp256k1fx.Fx{}},
+		fx.Claim{ID: warpfx.ID, Fx: &warpfx.Fx{}, Types: warpfx.Types()},
+	)
+	for _, claim := range vm.fxs.All() {
+		if err := claim.Fx.Initialize(vm); err != nil {
+			return fmt.Errorf("failed to initialize %s: %w", claim.ID, err)
+		}
 	}
 
 	vm.state, err = state.New(
@@ -148,7 +159,7 @@ func (vm *VM) Initialize(
 
 	validatorManager := pvalidators.NewManager(vm.Internal, vm.state, vm.metrics, &vm.clock)
 	vm.State = validatorManager
-	utxoVerifier := utxo.NewVerifier(vm.ctx, &vm.clock, vm.fx)
+	utxoVerifier := utxo.NewVerifier(vm.ctx, &vm.clock, vm.fxs)
 	vm.uptimeManager = uptime.NewManager(vm.state, &vm.clock)
 	vm.UptimeLockedCalculator.SetCalculator(&vm.bootstrapped, &chainCtx.Lock, vm.uptimeManager)
 
@@ -156,7 +167,8 @@ func (vm *VM) Initialize(
 		Config:       &vm.Internal,
 		Ctx:          vm.ctx,
 		Clk:          &vm.clock,
-		Fx:           vm.fx,
+		Fx:           vm.fxs.Default(),
+		Fxs:          vm.fxs,
 		FlowChecker:  utxoVerifier,
 		Uptimes:      vm.uptimeManager,
 		Bootstrapped: &vm.bootstrapped,
@@ -338,7 +350,12 @@ func (vm *VM) createSubnet(subnetID ids.ID) error {
 // onBootstrapStarted marks this VM as bootstrapping
 func (vm *VM) onBootstrapStarted() error {
 	vm.bootstrapped.Set(false)
-	return vm.fx.Bootstrapping()
+	for _, claim := range vm.fxs.All() {
+		if err := claim.Fx.Bootstrapping(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // onNormalOperationsStarted marks this VM as bootstrapped
@@ -348,8 +365,10 @@ func (vm *VM) onNormalOperationsStarted() error {
 	}
 	vm.bootstrapped.Set(true)
 
-	if err := vm.fx.Bootstrapped(); err != nil {
-		return err
+	for _, claim := range vm.fxs.All() {
+		if err := claim.Fx.Bootstrapped(); err != nil {
+			return err
+		}
 	}
 
 	if !vm.uptimeManager.StartedTracking() {

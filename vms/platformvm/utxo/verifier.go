@@ -71,27 +71,77 @@ type Verifier interface {
 		creds []verify.Verifiable,
 		unlockedProduced map[ids.ID]uint64,
 	) error
+
+	// VerifySpendWithContext is [VerifySpend] for a caller that resolved a
+	// transaction-scoped [fx.Context].
+	//
+	// Only the transactions allowed to carry a Warp authorization call it. Every
+	// other path keeps reaching [VerifySpend], which passes no context at all -
+	// which is why forgetting to route a transaction can only close a door.
+	VerifySpendWithContext(
+		fxCtx *fx.Context,
+		tx platform.UnsignedTx,
+		utxoDB avax.UTXOGetter,
+		ins []*avax.TransferableInput,
+		outs []*avax.TransferableOutput,
+		creds []verify.Verifiable,
+		unlockedProduced map[ids.ID]uint64,
+	) error
+
+	// VerifySpendUTXOsWithContext is [VerifySpendUTXOs] with the same context.
+	VerifySpendUTXOsWithContext(
+		fxCtx *fx.Context,
+		tx platform.UnsignedTx,
+		utxos []*avax.UTXO,
+		ins []*avax.TransferableInput,
+		outs []*avax.TransferableOutput,
+		creds []verify.Verifiable,
+		unlockedProduced map[ids.ID]uint64,
+	) error
 }
 
 func NewVerifier(
 	ctx *snow.Context,
 	clk *mockable.Clock,
-	fx fx.Fx,
+	fxs *fx.Fxs,
 ) Verifier {
 	return &verifier{
 		ctx: ctx,
 		clk: clk,
-		fx:  fx,
+		fxs: fxs,
 	}
 }
 
 type verifier struct {
 	ctx *snow.Context
 	clk *mockable.Clock
-	fx  fx.Fx
+	fxs *fx.Fxs
 }
 
 func (h *verifier) VerifySpend(
+	tx platform.UnsignedTx,
+	utxoDB avax.UTXOGetter,
+	ins []*avax.TransferableInput,
+	outs []*avax.TransferableOutput,
+	creds []verify.Verifiable,
+	unlockedProduced map[ids.ID]uint64,
+) error {
+	return h.VerifySpendWithContext(nil, tx, utxoDB, ins, outs, creds, unlockedProduced)
+}
+
+func (h *verifier) VerifySpendUTXOs(
+	tx platform.UnsignedTx,
+	utxos []*avax.UTXO,
+	ins []*avax.TransferableInput,
+	outs []*avax.TransferableOutput,
+	creds []verify.Verifiable,
+	unlockedProduced map[ids.ID]uint64,
+) error {
+	return h.VerifySpendUTXOsWithContext(nil, tx, utxos, ins, outs, creds, unlockedProduced)
+}
+
+func (h *verifier) VerifySpendWithContext(
+	fxCtx *fx.Context,
 	tx platform.UnsignedTx,
 	utxoDB avax.UTXOGetter,
 	ins []*avax.TransferableInput,
@@ -112,10 +162,11 @@ func (h *verifier) VerifySpend(
 		utxos[index] = utxo
 	}
 
-	return h.VerifySpendUTXOs(tx, utxos, ins, outs, creds, unlockedProduced)
+	return h.VerifySpendUTXOsWithContext(fxCtx, tx, utxos, ins, outs, creds, unlockedProduced)
 }
 
-func (h *verifier) VerifySpendUTXOs(
+func (h *verifier) VerifySpendUTXOsWithContext(
+	fxCtx *fx.Context,
 	tx platform.UnsignedTx,
 	utxos []*avax.UTXO,
 	ins []*avax.TransferableInput,
@@ -198,8 +249,13 @@ func (h *verifier) VerifySpendUTXOs(
 			in = inner.TransferableIn
 		}
 
-		// Verify that this tx's credentials allow [in] to be spent
-		if err := h.fx.VerifyTransfer(tx, in, creds[index], out); err != nil {
+		// Verify that this tx's credentials allow [in] to be spent.
+		//
+		// [out] is resolved, not [in]: the UTXO is what carries its own
+		// spending condition, and the input only references it. Note it is the
+		// output already unwrapped from its stakeable.LockOut just above - a
+		// locked UTXO would otherwise resolve to the wrong extension.
+		if err := h.fxs.VerifyTransfer(fxCtx, tx, in, creds[index], out); err != nil {
 			return fmt.Errorf("failed to verify transfer: %w", err)
 		}
 

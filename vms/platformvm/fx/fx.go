@@ -4,6 +4,7 @@
 package fx
 
 import (
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
@@ -41,6 +42,53 @@ type Fx interface {
 	// CreateOutput creates a new output with the provided control group worth
 	// the specified amount
 	CreateOutput(amount uint64, controlGroup interface{}) (interface{}, error)
+}
+
+// Claim is one feature extension of a [Fxs] collection, together with the
+// concrete types it claims.
+//
+// Types is nil for the default extension: it is what every unclaimed type
+// resolves to anyway, so listing its types would only create a second place to
+// keep them.
+type Claim struct {
+	ID    ids.ID
+	Fx    Fx
+	Types []any
+}
+
+// Context is the transaction-scoped information a Fx may need in addition to
+// the (input, credential, utxo) triple.
+//
+// It is always passed as an argument and never retained by a Fx: an
+// authorization that survived from one verification to the next would authorize
+// a transaction it never approved.
+type Context struct {
+	// Authorization is resolved once per transaction, or nil when the
+	// transaction carries none. It is typed as an interface because this
+	// package must not depend on any particular Fx.
+	Authorization interface{}
+}
+
+// ContextualFx is a Fx whose conditions cannot be decided from the
+// (input, credential, utxo) triple alone.
+//
+// Fxs that do not implement it keep being called through [Fx.VerifyTransfer]
+// and [Fx.VerifyPermission].
+type ContextualFx interface {
+	Fx
+
+	// VerifyTransferWithContext is [Fx.VerifyTransfer] with the additional
+	// transaction-scoped context. A nil fxCtx means the caller reached this
+	// utxo through an entry point that resolves no authorization.
+	VerifyTransferWithContext(fxCtx *Context, tx, in, cred, utxo interface{}) error
+
+	// VerifyPermissionWithContext is [Fx.VerifyPermission] with the same
+	// context.
+	//
+	// Callers that have no authorization to offer keep using
+	// [Fx.VerifyPermission], which is what confines a Fx to the control groups
+	// it can actually prove assent for.
+	VerifyPermissionWithContext(fxCtx *Context, tx, in, cred, controlGroup interface{}) error
 }
 
 type Owner interface {

@@ -17,8 +17,11 @@ import (
 	"github.com/ava-labs/avalanchego/utils/crypto/bls"
 	"github.com/ava-labs/avalanchego/utils/crypto/bls/signer/localsigner"
 	"github.com/ava-labs/avalanchego/utils/set"
+	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
 	"github.com/ava-labs/avalanchego/vms/platformvm/warp"
+	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 )
 
 func TestVerifyWarpMessages(t *testing.T) {
@@ -90,6 +93,7 @@ func TestVerifyWarpMessages(t *testing.T) {
 	tests := []struct {
 		name        string
 		tx          platform.UnsignedTx
+		creds       []verify.Verifiable
 		expectedErr error
 	}{
 		{
@@ -197,6 +201,52 @@ func TestVerifyWarpMessages(t *testing.T) {
 			tx:   &platform.IncreaseL1ValidatorBalanceTx{},
 		},
 		{
+			// Every warpfx slot but one carries an empty message, so an
+			// authorization is found by scanning and never by position.
+			name: "BaseTx with an authorization behind an empty warpfx slot",
+			tx:   &platform.BaseTx{},
+			creds: []verify.Verifiable{
+				&secp256k1fx.Credential{},
+				&warpfx.Credential{},
+				&warpfx.Credential{WarpMessage: validWarpMessage.Bytes()},
+			},
+		},
+		{
+			name: "ExportTx with an invalid authorization",
+			tx:   &platform.ExportTx{},
+			creds: []verify.Verifiable{
+				&warpfx.Credential{WarpMessage: invalidWarpMessage.Bytes()},
+			},
+			expectedErr: warp.ErrWrongNetworkID,
+		},
+		{
+			name: "ImportTx with an unparsable authorization",
+			tx:   &platform.ImportTx{},
+			creds: []verify.Verifiable{
+				&warpfx.Credential{WarpMessage: []byte{0x01}},
+			},
+			expectedErr: codec.ErrCantUnpackVersion,
+		},
+		{
+			name: "AddPermissionlessValidatorTx with two authorizations",
+			tx:   &platform.AddPermissionlessValidatorTx{},
+			creds: []verify.Verifiable{
+				&warpfx.Credential{WarpMessage: validWarpMessage.Bytes()},
+				&warpfx.Credential{WarpMessage: validWarpMessage.Bytes()},
+			},
+			expectedErr: ErrMultipleWarpAuthorizations,
+		},
+		{
+			// The quorum is all this verifier checks. Whether the transaction
+			// may carry an authorization at all is settled on the execution
+			// path, which is the one always travelled.
+			name: "CreateSubnetTx with an authorization is not this verifier's business",
+			tx:   &platform.CreateSubnetTx{},
+			creds: []verify.Verifiable{
+				&warpfx.Credential{WarpMessage: invalidWarpMessage.Bytes()},
+			},
+		},
+		{
 			name: "DisableL1ValidatorTx",
 			tx:   &platform.DisableL1ValidatorTx{},
 		},
@@ -208,7 +258,10 @@ func TestVerifyWarpMessages(t *testing.T) {
 				constants.UnitTestID,
 				state,
 				0,
-				test.tx,
+				&platform.Tx{
+					Unsigned: test.tx,
+					Creds:    test.creds,
+				},
 			)
 			require.Equal(t, test.expectedErr, err)
 		})

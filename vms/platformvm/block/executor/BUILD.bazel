@@ -116,6 +116,7 @@ go_test(
         "//vms/platformvm/validators/fee",
         "//vms/secp256k1fx",
         "//vms/types",
+        "//vms/warpfx",
         "//wallet/chain/p/wallet",
         "//wallet/subnet/primary/common",
         "@com_github_prometheus_client_golang//prometheus",

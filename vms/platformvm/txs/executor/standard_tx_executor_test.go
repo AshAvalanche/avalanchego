@@ -33,6 +33,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/config"
+	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/fx/fxmock"
 	"github.com/ava-labs/avalanchego/vms/platformvm/genesis/genesistest"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
@@ -2379,12 +2380,12 @@ func TestStandardExecutorTransformSubnetTx(t *testing.T) {
 
 func TestStandardExecutorConvertSubnetToL1Tx(t *testing.T) {
 	var (
-		fx = &secp256k1fx.Fx{}
-		vm = &secp256k1fx.TestVM{
+		secpFx = &secp256k1fx.Fx{}
+		vm     = &secp256k1fx.TestVM{
 			Log: logging.NoLog{},
 		}
 	)
-	require.NoError(t, fx.InitializeVM(vm))
+	require.NoError(t, secpFx.InitializeVM(vm))
 
 	var (
 		ctx           = snowtest.Context(t, constants.PlatformChainID)
@@ -2406,10 +2407,13 @@ func TestStandardExecutorConvertSubnetToL1Tx(t *testing.T) {
 			nil, // validationIDs
 			nil, // chainIDs
 		)
+		// secp256k1fx alone: none of these transactions carries a warpfx output,
+		// and the TestVM above has no codec registry for warpfx.Fx.Initialize.
+		fxs         = fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx})
 		flowChecker = utxo.NewVerifier(
 			ctx,
 			&vm.Clk,
-			fx,
+			fxs,
 		)
 	)
 
@@ -2434,7 +2438,8 @@ func TestStandardExecutorConvertSubnetToL1Tx(t *testing.T) {
 		&Backend{
 			Config:       defaultConfig,
 			Bootstrapped: utils.NewAtomic(true),
-			Fx:           fx,
+			Fx:           fxs.Default(),
+			Fxs:          fxs,
 			FlowChecker:  flowChecker,
 			Ctx:          ctx,
 		},
@@ -2673,7 +2678,8 @@ func TestStandardExecutorConvertSubnetToL1Tx(t *testing.T) {
 				backend: &Backend{
 					Config:       defaultConfig,
 					Bootstrapped: utils.NewAtomic(true),
-					Fx:           fx,
+					Fx:           fxs.Default(),
+					Fxs:          fxs,
 					FlowChecker:  flowChecker,
 					Ctx:          ctx,
 				},
@@ -2762,12 +2768,12 @@ func TestStandardExecutorConvertSubnetToL1Tx(t *testing.T) {
 
 func TestStandardExecutorRegisterL1ValidatorTx(t *testing.T) {
 	var (
-		fx = &secp256k1fx.Fx{}
-		vm = &secp256k1fx.TestVM{
+		secpFx = &secp256k1fx.Fx{}
+		vm     = &secp256k1fx.TestVM{
 			Log: logging.NoLog{},
 		}
 	)
-	require.NoError(t, fx.InitializeVM(vm))
+	require.NoError(t, secpFx.InitializeVM(vm))
 
 	var (
 		ctx           = snowtest.Context(t, constants.PlatformChainID)
@@ -2790,16 +2796,20 @@ func TestStandardExecutorRegisterL1ValidatorTx(t *testing.T) {
 			nil, // validationIDs
 			nil, // chainIDs
 		)
+		// secp256k1fx alone: none of these transactions carries a warpfx output,
+		// and the TestVM above has no codec registry for warpfx.Fx.Initialize.
+		fxs         = fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx})
 		flowChecker = utxo.NewVerifier(
 			ctx,
 			&vm.Clk,
-			fx,
+			fxs,
 		)
 
 		backend = &Backend{
 			Config:       defaultConfig,
 			Bootstrapped: utils.NewAtomic(true),
-			Fx:           fx,
+			Fx:           fxs.Default(),
+			Fxs:          fxs,
 			FlowChecker:  flowChecker,
 			Ctx:          ctx,
 		}
@@ -3221,7 +3231,8 @@ func TestStandardExecutorRegisterL1ValidatorTx(t *testing.T) {
 				backend: &Backend{
 					Config:       defaultConfig,
 					Bootstrapped: utils.NewAtomic(true),
-					Fx:           fx,
+					Fx:           fxs.Default(),
+					Fxs:          fxs,
 					FlowChecker:  flowChecker,
 					Ctx:          ctx,
 				},
@@ -3286,12 +3297,12 @@ func TestStandardExecutorRegisterL1ValidatorTx(t *testing.T) {
 
 func TestStandardExecutorSetL1ValidatorWeightTx(t *testing.T) {
 	var (
-		fx = &secp256k1fx.Fx{}
-		vm = &secp256k1fx.TestVM{
+		secpFx = &secp256k1fx.Fx{}
+		vm     = &secp256k1fx.TestVM{
 			Log: logging.NoLog{},
 		}
 	)
-	require.NoError(t, fx.InitializeVM(vm))
+	require.NoError(t, secpFx.InitializeVM(vm))
 
 	var (
 		ctx           = snowtest.Context(t, constants.PlatformChainID)
@@ -3314,16 +3325,20 @@ func TestStandardExecutorSetL1ValidatorWeightTx(t *testing.T) {
 			nil, // validationIDs
 			nil, // chainIDs
 		)
+		// secp256k1fx alone: none of these transactions carries a warpfx output,
+		// and the TestVM above has no codec registry for warpfx.Fx.Initialize.
+		fxs         = fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx})
 		flowChecker = utxo.NewVerifier(
 			ctx,
 			&vm.Clk,
-			fx,
+			fxs,
 		)
 
 		backend = &Backend{
 			Config:       defaultConfig,
 			Bootstrapped: utils.NewAtomic(true),
-			Fx:           fx,
+			Fx:           fxs.Default(),
+			Fxs:          fxs,
 			FlowChecker:  flowChecker,
 			Ctx:          ctx,
 		}
@@ -3722,7 +3737,8 @@ func TestStandardExecutorSetL1ValidatorWeightTx(t *testing.T) {
 				backend: &Backend{
 					Config:       defaultConfig,
 					Bootstrapped: utils.NewAtomic(true),
-					Fx:           fx,
+					Fx:           fxs.Default(),
+					Fxs:          fxs,
 					FlowChecker:  flowChecker,
 					Ctx:          ctx,
 				},
@@ -3785,12 +3801,12 @@ func TestStandardExecutorSetL1ValidatorWeightTx(t *testing.T) {
 
 func TestStandardExecutorIncreaseL1ValidatorBalanceTx(t *testing.T) {
 	var (
-		fx = &secp256k1fx.Fx{}
-		vm = &secp256k1fx.TestVM{
+		secpFx = &secp256k1fx.Fx{}
+		vm     = &secp256k1fx.TestVM{
 			Log: logging.NoLog{},
 		}
 	)
-	require.NoError(t, fx.InitializeVM(vm))
+	require.NoError(t, secpFx.InitializeVM(vm))
 
 	var (
 		ctx           = snowtest.Context(t, constants.PlatformChainID)
@@ -3813,16 +3829,20 @@ func TestStandardExecutorIncreaseL1ValidatorBalanceTx(t *testing.T) {
 			nil, // validationIDs
 			nil, // chainIDs
 		)
+		// secp256k1fx alone: none of these transactions carries a warpfx output,
+		// and the TestVM above has no codec registry for warpfx.Fx.Initialize.
+		fxs         = fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx})
 		flowChecker = utxo.NewVerifier(
 			ctx,
 			&vm.Clk,
-			fx,
+			fxs,
 		)
 
 		backend = &Backend{
 			Config:       defaultConfig,
 			Bootstrapped: utils.NewAtomic(true),
-			Fx:           fx,
+			Fx:           fxs.Default(),
+			Fxs:          fxs,
 			FlowChecker:  flowChecker,
 			Ctx:          ctx,
 		}
@@ -4031,7 +4051,8 @@ func TestStandardExecutorIncreaseL1ValidatorBalanceTx(t *testing.T) {
 				backend: &Backend{
 					Config:       defaultConfig,
 					Bootstrapped: utils.NewAtomic(true),
-					Fx:           fx,
+					Fx:           fxs.Default(),
+					Fxs:          fxs,
 					FlowChecker:  flowChecker,
 					Ctx:          ctx,
 				},
@@ -4074,13 +4095,13 @@ func TestStandardExecutorIncreaseL1ValidatorBalanceTx(t *testing.T) {
 
 func TestStandardExecutorDisableL1ValidatorTx(t *testing.T) {
 	var (
-		fx = &secp256k1fx.Fx{}
-		vm = &secp256k1fx.TestVM{
+		secpFx = &secp256k1fx.Fx{}
+		vm     = &secp256k1fx.TestVM{
 			Log: logging.NoLog{},
 		}
 	)
-	require.NoError(t, fx.InitializeVM(vm))
-	require.NoError(t, fx.Bootstrapped())
+	require.NoError(t, secpFx.InitializeVM(vm))
+	require.NoError(t, secpFx.Bootstrapped())
 
 	var (
 		ctx           = snowtest.Context(t, constants.PlatformChainID)
@@ -4103,16 +4124,20 @@ func TestStandardExecutorDisableL1ValidatorTx(t *testing.T) {
 			nil, // validationIDs
 			nil, // chainIDs
 		)
+		// secp256k1fx alone: none of these transactions carries a warpfx output,
+		// and the TestVM above has no codec registry for warpfx.Fx.Initialize.
+		fxs         = fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx})
 		flowChecker = utxo.NewVerifier(
 			ctx,
 			&vm.Clk,
-			fx,
+			fxs,
 		)
 
 		backend = &Backend{
 			Config:       defaultConfig,
 			Bootstrapped: utils.NewAtomic(true),
-			Fx:           fx,
+			Fx:           fxs.Default(),
+			Fxs:          fxs,
 			FlowChecker:  flowChecker,
 			Ctx:          ctx,
 		}
@@ -4306,7 +4331,8 @@ func TestStandardExecutorDisableL1ValidatorTx(t *testing.T) {
 				backend: &Backend{
 					Config:       defaultConfig,
 					Bootstrapped: utils.NewAtomic(true),
-					Fx:           fx,
+					Fx:           fxs.Default(),
+					Fxs:          fxs,
 					FlowChecker:  flowChecker,
 					Ctx:          ctx,
 				},

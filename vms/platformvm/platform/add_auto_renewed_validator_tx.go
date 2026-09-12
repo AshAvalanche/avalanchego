@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/reward"
 	"github.com/ava-labs/avalanchego/vms/platformvm/signer"
-	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 	"github.com/ava-labs/avalanchego/vms/types"
 )
 
@@ -130,7 +129,7 @@ func (tx *AddAutoRenewedValidatorTx) Shares() uint32 {
 func (tx *AddAutoRenewedValidatorTx) InitCtx(ctx *snow.Context) {
 	tx.BaseTx.InitCtx(ctx)
 	for _, out := range tx.StakeOuts {
-		out.FxID = secp256k1fx.ID
+		out.FxID = outputFxID(out)
 		out.InitCtx(ctx)
 	}
 	tx.ValidatorRewardsOwner.InitCtx(ctx)

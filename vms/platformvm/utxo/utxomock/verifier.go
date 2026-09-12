@@ -15,6 +15,7 @@ import (
 	ids "github.com/ava-labs/avalanchego/ids"
 	avax "github.com/ava-labs/avalanchego/vms/components/avax"
 	verify "github.com/ava-labs/avalanchego/vms/components/verify"
+	fx "github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	platform "github.com/ava-labs/avalanchego/vms/platformvm/platform"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -69,4 +70,32 @@ func (m *Verifier) VerifySpendUTXOs(tx platform.UnsignedTx, utxos []*avax.UTXO, 
 func (mr *VerifierMockRecorder) VerifySpendUTXOs(tx, utxos, ins, outs, creds, unlockedProduced any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifySpendUTXOs", reflect.TypeOf((*Verifier)(nil).VerifySpendUTXOs), tx, utxos, ins, outs, creds, unlockedProduced)
+}
+
+// VerifySpendUTXOsWithContext mocks base method.
+func (m *Verifier) VerifySpendUTXOsWithContext(fxCtx *fx.Context, tx platform.UnsignedTx, utxos []*avax.UTXO, ins []*avax.TransferableInput, outs []*avax.TransferableOutput, creds []verify.Verifiable, unlockedProduced map[ids.ID]uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifySpendUTXOsWithContext", fxCtx, tx, utxos, ins, outs, creds, unlockedProduced)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// VerifySpendUTXOsWithContext indicates an expected call of VerifySpendUTXOsWithContext.
+func (mr *VerifierMockRecorder) VerifySpendUTXOsWithContext(fxCtx, tx, utxos, ins, outs, creds, unlockedProduced any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifySpendUTXOsWithContext", reflect.TypeOf((*Verifier)(nil).VerifySpendUTXOsWithContext), fxCtx, tx, utxos, ins, outs, creds, unlockedProduced)
+}
+
+// VerifySpendWithContext mocks base method.
+func (m *Verifier) VerifySpendWithContext(fxCtx *fx.Context, tx platform.UnsignedTx, utxoDB avax.UTXOGetter, ins []*avax.TransferableInput, outs []*avax.TransferableOutput, creds []verify.Verifiable, unlockedProduced map[ids.ID]uint64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifySpendWithContext", fxCtx, tx, utxoDB, ins, outs, creds, unlockedProduced)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// VerifySpendWithContext indicates an expected call of VerifySpendWithContext.
+func (mr *VerifierMockRecorder) VerifySpendWithContext(fxCtx, tx, utxoDB, ins, outs, creds, unlockedProduced any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifySpendWithContext", reflect.TypeOf((*Verifier)(nil).VerifySpendWithContext), fxCtx, tx, utxoDB, ins, outs, creds, unlockedProduced)
 }

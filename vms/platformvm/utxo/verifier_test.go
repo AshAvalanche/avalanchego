@@ -10,15 +10,19 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/avalanchego/codec/linearcodec"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/crypto/secp256k1"
+	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
+	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
 	"github.com/ava-labs/avalanchego/vms/platformvm/stakeable"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 
 	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
@@ -102,17 +106,17 @@ func TestGetInputOutputs(t *testing.T) {
 }
 
 func TestVerifySpendUTXOs(t *testing.T) {
-	fx := &secp256k1fx.Fx{}
+	secpFx := &secp256k1fx.Fx{}
 
-	require.NoError(t, fx.InitializeVM(&secp256k1fx.TestVM{}))
-	require.NoError(t, fx.Bootstrapped())
+	require.NoError(t, secpFx.InitializeVM(&secp256k1fx.TestVM{}))
+	require.NoError(t, secpFx.Bootstrapped())
 
 	ctx := snowtest.Context(t, snowtest.PChainID)
 
 	h := &verifier{
 		ctx: ctx,
 		clk: &mockable.Clock{},
-		fx:  fx,
+		fxs: fx.NewFxs(fx.Claim{ID: secp256k1fx.ID, Fx: secpFx}),
 	}
 
 	// The handler time during a test, unless [chainTimestamp] is set
@@ -1170,4 +1174,86 @@ func TestVerifySpendUTXOs(t *testing.T) {
 			require.ErrorIs(t, err, test.expectedErr)
 		})
 	}
+}
+
+// TestVerifySpendUTXOsDispatchesOnTheConsumedOutput is what proves the Fx
+// collection actually dispatches.
+//
+// It is worth its own test because the failure it guards against is silent: a
+// collection whose table was never filled resolves everything to the default,
+// compiles, and leaves every other test in this suite green. The symptom only
+// shows up much later, as a secp256k1fx.ErrWrongUTXOType nobody connects to its
+// cause.
+//
+// It also covers the context plumbed through the verifier: same UTXO, same
+// input, same credential, and the answer changes with the authorization alone.
+func TestVerifySpendUTXOsDispatchesOnTheConsumedOutput(t *testing.T) {
+	require := require.New(t)
+
+	warpFx := &warpfx.Fx{}
+	require.NoError(warpFx.Initialize(&warpfx.TestVM{
+		Codec: linearcodec.NewDefault(),
+		Log:   logging.NoLog{},
+	}))
+
+	secpFx := &secp256k1fx.Fx{}
+	require.NoError(secpFx.InitializeVM(&secp256k1fx.TestVM{}))
+
+	h := &verifier{
+		ctx: snowtest.Context(t, snowtest.PChainID),
+		clk: &mockable.Clock{},
+		fxs: fx.NewFxs(
+			fx.Claim{ID: secp256k1fx.ID, Fx: secpFx},
+			fx.Claim{ID: warpfx.ID, Fx: warpFx, Types: warpfx.Types()},
+		),
+	}
+
+	unsignedTx := dummyUnsignedTx{BaseTx: platform.BaseTx{}}
+	unsignedTx.SetBytes([]byte{0})
+
+	var (
+		assetID = ids.GenerateTestID()
+		owner   = warpfx.Owner{
+			SourceChainID: ids.GenerateTestID(),
+			SourceAddress: ids.GenerateTestShortID().Bytes(),
+		}
+		utxos = []*avax.UTXO{{
+			Asset: avax.Asset{ID: assetID},
+			Out: &warpfx.TransferOutput{
+				Amt:   1000,
+				Owner: owner,
+			},
+		}}
+		ins = []*avax.TransferableInput{{
+			Asset: avax.Asset{ID: assetID},
+			In:    &secp256k1fx.TransferInput{Amt: 1000},
+		}}
+		creds = []verify.Verifiable{&warpfx.Credential{}}
+	)
+
+	// No context: the extension is reached through its context-free entry
+	// point, which is exactly what closes every unrouted path.
+	err := h.VerifySpendUTXOs(&unsignedTx, utxos, ins, nil, creds, map[ids.ID]uint64{})
+	require.ErrorIs(err, warpfx.ErrNoAuthorization)
+
+	// An authorization from somebody else reaches the extension all the same,
+	// and is refused on provenance rather than on the type.
+	err = h.VerifySpendUTXOsWithContext(
+		&fx.Context{Authorization: &warpfx.Authorization{
+			SourceChainID: owner.SourceChainID,
+			SourceAddress: ids.GenerateTestShortID().Bytes(),
+		}},
+		&unsignedTx, utxos, ins, nil, creds, map[ids.ID]uint64{},
+	)
+	require.ErrorIs(err, warpfx.ErrWrongOwner)
+
+	// The owner's own authorization: the only thing that changed is the
+	// context.
+	require.NoError(h.VerifySpendUTXOsWithContext(
+		&fx.Context{Authorization: &warpfx.Authorization{
+			SourceChainID: owner.SourceChainID,
+			SourceAddress: owner.SourceAddress,
+		}},
+		&unsignedTx, utxos, ins, nil, creds, map[ids.ID]uint64{},
+	))
 }

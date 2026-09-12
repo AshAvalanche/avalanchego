@@ -914,13 +914,17 @@ func (s *Service) getPrimaryOrSubnetValidators(subnetID ids.ID, nodeIDs set.Set[
 			}
 
 			if attr.autoRenewedValidatorAuthority != nil {
-				validatorAuthority, ok := attr.autoRenewedValidatorAuthority.(*secp256k1fx.OutputOwners)
-				if !ok {
-					return nil, fmt.Errorf("expected *secp256k1fx.OutputOwners but got %T", attr.autoRenewedValidatorAuthority)
-				}
-				apiAuthority, err := s.getAPIOwner(validatorAuthority)
-				if err != nil {
-					return nil, err
+				// An authority this endpoint cannot render leaves the field
+				// empty, exactly as the rewards owners above do. Refusing
+				// instead would fail the whole call - every validator, not just
+				// this one - the moment a single warp owner appears, and
+				// getWarpOwnerUTXOs is where such an owner is looked up anyway.
+				var apiAuthority *platformapi.Owner
+				if validatorAuthority, ok := attr.autoRenewedValidatorAuthority.(*secp256k1fx.OutputOwners); ok {
+					apiAuthority, err = s.getAPIOwner(validatorAuthority)
+					if err != nil {
+						return nil, err
+					}
 				}
 				vdr.AutoRenewedConfig = &platformapi.AutoRenewedConfig{
 					ValidatorAuthority:       apiAuthority,

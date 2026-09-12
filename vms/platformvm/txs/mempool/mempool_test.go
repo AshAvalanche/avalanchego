@@ -14,12 +14,20 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
+	"github.com/ava-labs/avalanchego/utils"
+	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/utils/crypto/bls"
+	"github.com/ava-labs/avalanchego/utils/crypto/bls/signer/localsigner"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
+	"github.com/ava-labs/avalanchego/vms/platformvm/txs/fee"
 	"github.com/ava-labs/avalanchego/vms/platformvm/utxo"
+	"github.com/ava-labs/avalanchego/vms/platformvm/warp"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 
 	txmempool "github.com/ava-labs/avalanchego/vms/txs/mempool"
 )
@@ -882,4 +890,82 @@ func TestMempool_Iterate(t *testing.T) {
 			require.Equal(tt.wantTxs, gotTxs)
 		})
 	}
+}
+
+// TestMempoolMetersCredentials pins the half of credential pricing that does
+// not look like pricing: block capacity.
+//
+// A Warp authorization lives in the credentials, so metering the unsigned form
+// would let an authorized transaction take more room than the gas it is charged
+// for. Nothing would break - the block would simply be heavier than its target,
+// a symptom nobody connects to a credential.
+func TestMempoolMetersCredentials(t *testing.T) {
+	require := require.New(t)
+
+	weights := gas.Dimensions{gas.Bandwidth: 1}
+
+	plain := newTxWithUTXOs(
+		ids.GenerateTestID(),
+		[]*avax.TransferableInput{newAVAXInput(ids.GenerateTestID(), 5)},
+		1,
+	)
+
+	// A capacity that fits the transaction exactly, so a single extra gas unit
+	// is enough to make it not fit.
+	capacity := func(tx *platform.Tx) gas.Gas {
+		complexity, err := fee.SignedTxComplexity(tx)
+		require.NoError(err)
+
+		gasUsed, err := complexity.ToGas(weights)
+		require.NoError(err)
+		return gasUsed
+	}
+
+	newMempool := func(gasCapacity gas.Gas) *Mempool {
+		m, err := New("", weights, gasCapacity, snowtest.AVAXAssetID, prometheus.NewRegistry())
+		require.NoError(err)
+		return m
+	}
+
+	require.NoError(newMempool(capacity(plain)).Add(plain))
+
+	// The same transaction carrying an authorization needs strictly more room.
+	authorized := newTxWithUTXOs(
+		plain.TxID,
+		[]*avax.TransferableInput{newAVAXInput(ids.GenerateTestID(), 5)},
+		1,
+	)
+	authorized.Creds = []verify.Verifiable{
+		&warpfx.Credential{WarpMessage: newTestWarpMessage(t)},
+	}
+
+	require.Greater(capacity(authorized), capacity(plain))
+	require.ErrorIs(newMempool(capacity(plain)).Add(authorized), ErrNotEnoughGas)
+	require.NoError(newMempool(capacity(authorized)).Add(authorized))
+}
+
+// newTestWarpMessage builds a signed Warp message, the payload a carrier
+// credential holds.
+func newTestWarpMessage(t *testing.T) []byte {
+	t.Helper()
+
+	unsigned, err := warp.NewUnsignedMessage(
+		constants.UnitTestID,
+		ids.GenerateTestID(),
+		utils.RandomBytes(128),
+	)
+	require.NoError(t, err)
+
+	sk, err := localsigner.New()
+	require.NoError(t, err)
+
+	sig, err := sk.Sign(unsigned.Bytes())
+	require.NoError(t, err)
+
+	msg, err := warp.NewMessage(unsigned, &warp.BitSetSignature{
+		Signers:   set.NewBits(0).Bytes(),
+		Signature: [bls.SignatureLen]byte(bls.SignatureToBytes(sig)),
+	})
+	require.NoError(t, err)
+	return msg.Bytes()
 }

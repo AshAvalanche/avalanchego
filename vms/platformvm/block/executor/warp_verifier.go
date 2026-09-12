@@ -26,7 +26,7 @@ func VerifyWarpMessages(
 			networkID,
 			validatorState,
 			pChainHeight,
-			tx.Unsigned,
+			tx,
 		)
 		if err != nil {
 			return err

@@ -154,14 +154,18 @@ var (
 	errVerifyingTransfer  = errors.New("verifying transfer")
 )
 
-func (i *Import) verifyCredentials(sm chainsatomic.SharedMemory, creds []Credential) error {
+// verifyCredentials also reports whether the batch was canonical, rather than
+// leaving the caller to work it out: deciding that means reading the consumed
+// UTXOs, and a second shared-memory read to learn what we already know would be
+// work and a source of divergence.
+func (i *Import) verifyCredentials(ctx *snow.Context, sm chainsatomic.SharedMemory, creds []Credential) (bool, error) {
 	if len(i.ImportedInputs) != len(creds) {
-		return fmt.Errorf("%w: want %d, got %d", errIncorrectNumCredentials, len(i.ImportedInputs), len(creds))
+		return false, fmt.Errorf("%w: want %d, got %d", errIncorrectNumCredentials, len(i.ImportedInputs), len(creds))
 	}
 
 	fxTx, err := toFxTx(i)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errConvertingToFxTx, err)
+		return false, fmt.Errorf("%w: %w", errConvertingToFxTx, err)
 	}
 
 	utxoIDs := make([][]byte, len(i.ImportedInputs))
@@ -172,7 +176,31 @@ func (i *Import) verifyCredentials(sm chainsatomic.SharedMemory, creds []Credent
 
 	utxoBytes, err := sm.Get(i.SourceChain, utxoIDs)
 	if err != nil {
-		return fmt.Errorf("%w from %s: %w", errFetchingUTXOs, i.SourceChain, err)
+		return false, fmt.Errorf("%w from %s: %w", errFetchingUTXOs, i.SourceChain, err)
+	}
+
+	utxos := make([]*avax.UTXO, len(i.ImportedInputs))
+	for j, in := range i.ImportedInputs {
+		utxo, err := ParseUTXO(utxoBytes[j])
+		if err != nil {
+			return false, fmt.Errorf("%w (%d): %w", errUnmarshallingUTXO, j, err)
+		}
+		if utxo.Asset.ID != in.Asset.ID {
+			return false, fmt.Errorf("%w (%d): input asset %s does not match UTXO asset %s", errMismatchedAssetIDs, j, in.Asset.ID, utxo.Asset.ID)
+		}
+		utxos[j] = utxo
+	}
+
+	// The mirror of the P-Chain's canonical import: a batch entirely held by
+	// one warp owner presents no authorization, so the provenance test has no
+	// operand and the Fx is not called at all. The short-circuit belongs to
+	// this shape and to it alone - generalized, it would make every warpfx UTXO
+	// spendable by anyone.
+	if isCanonicalImport(utxos) {
+		if err := verifyCanonicalImport(ctx, i, creds, utxos); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	for j, in := range i.ImportedInputs {
@@ -180,18 +208,11 @@ func (i *Import) verifyCredentials(sm chainsatomic.SharedMemory, creds []Credent
 		// includes signature verification. This is non-trivial, because
 		// transactions frequently contain duplicate signatures, which are
 		// currently being cached.
-		utxo, err := ParseUTXO(utxoBytes[j])
-		if err != nil {
-			return fmt.Errorf("%w (%d): %w", errUnmarshallingUTXO, j, err)
-		}
-		if utxo.Asset.ID != in.Asset.ID {
-			return fmt.Errorf("%w (%d): input asset %s does not match UTXO asset %s", errMismatchedAssetIDs, j, in.Asset.ID, utxo.Asset.ID)
-		}
-		if err := fx.VerifyTransfer(fxTx, in.In, creds[j], utxo.Out); err != nil {
-			return fmt.Errorf("%w (%d): %w", errVerifyingTransfer, j, err)
+		if err := fx.VerifyTransfer(fxTx, in.In, creds[j], utxos[j].Out); err != nil {
+			return false, fmt.Errorf("%w (%d): %w", errVerifyingTransfer, j, err)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 var errUnexpectedInputType = errors.New("unexpected input type")

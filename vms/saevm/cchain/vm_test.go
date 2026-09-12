@@ -1957,6 +1957,19 @@ func TestEmptyBlocksDisallowed(t *testing.T) {
 
 // TestPreHeliconBlocksDisallowed verifies blocks cannot be built or verified
 // before Helicon activates, but can still be parsed.
+// TestPreHeliconBlocksDisallowed also carries the warp UTXOs proposal's
+// dispensation from writing an activation guard on the C-chain side.
+//
+// The VM transition happens ten seconds *before* HeliconTime, so there is a
+// window where saevm is installed and the upgrade is not active - a guard
+// reasoning from "saevm only runs after Helicon" would be wrong. What holds
+// instead is structural: builder.BuildHeader refuses a pre-Helicon timestamp on
+// its first line, and rebuild takes the same path with the examined block's own
+// timestamp as its clock, so the first saevm block is necessarily at or after
+// HeliconTime and no warpfx output can be born before it.
+//
+// This test is the only place that claim is checked rather than reasoned.
+// Weakening it removes the dispensation with it.
 func TestPreHeliconBlocksDisallowed(t *testing.T) {
 	key := txtest.NewKey(t)
 	// Schedule Helicon after the other upgrades so a pre-Helicon timestamp is

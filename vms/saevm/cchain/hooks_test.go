@@ -5,26 +5,35 @@ package cchain
 
 import (
 	"math/big"
+	"slices"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/avalanchego/chains/atomic"
+	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/graft/coreth/params/extras"
 	"github.com/ava-labs/avalanchego/graft/coreth/plugin/evm/customtypes"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils"
+	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/set"
+	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/avalanchego/vms/evm/acp176"
 	"github.com/ava-labs/avalanchego/vms/evm/acp226"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/cchaintest"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/dynamic"
+	"github.com/ava-labs/avalanchego/vms/saevm/cchain/tx"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/tx/txtest"
 	"github.com/ava-labs/avalanchego/vms/saevm/hook"
+	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 )
 
 func TestDelayExponent(t *testing.T) {
@@ -279,4 +288,118 @@ func TestSettledBy(t *testing.T) {
 			require.Equal(t, tt.want, hooks.SettledBy(tt.header), "hooks.SettledBy()")
 		})
 	}
+}
+
+// TestPotentialEndOfBlockOpsBoundsCanonicalBid covers the ceiling this
+// proposal puts on what a canonical import may bid.
+//
+// On this VM the burned amount is not a fee but a bid: it becomes an offered
+// gas price and the fee mechanism decides inclusion from it. That makes burning
+// everything attractive rather than merely wasteful, and a canonical import is
+// signed by nobody - so without this ceiling a third party could destroy the
+// owner's funds to speed up its own transaction.
+//
+// Under the rebuild-and-compare model, refusing to yield here is a consensus
+// rule: a block holding an over-bidding operation does not rebuild.
+func TestPotentialEndOfBlockOpsBoundsCanonicalBid(t *testing.T) {
+	require := require.New(t)
+
+	ctx := snowtest.Context(t, snowtest.CChainID)
+
+	var (
+		address = ids.GenerateTestShortID()
+		owner   = warpfx.Owner{
+			SourceChainID: ctx.ChainID,
+			SourceAddress: address[:],
+		}
+		utxo = &avax.UTXO{
+			UTXOID: avax.UTXOID{TxID: ids.GenerateTestID()},
+			Asset:  avax.Asset{ID: ctx.AVAXAssetID},
+			Out:    &warpfx.TransferOutput{Amt: 1000, Owner: owner},
+		}
+	)
+
+	memory := atomic.NewMemory(memdb.New())
+	utxoBytes, err := tx.MarshalUTXO(utxo)
+	require.NoError(err)
+	utxoID := utxo.InputID()
+	require.NoError(memory.NewSharedMemory(constants.PlatformChainID).Apply(map[ids.ID]*atomic.Requests{
+		ctx.ChainID: {PutRequests: []*atomic.Element{{Key: utxoID[:], Value: utxoBytes}}},
+	}))
+	ctx.SharedMemory = memory.NewSharedMemory(ctx.ChainID)
+
+	canonicalTx := &tx.Tx{
+		Unsigned: &tx.Import{
+			NetworkID:    ctx.NetworkID,
+			BlockchainID: ctx.ChainID,
+			SourceChain:  constants.PlatformChainID,
+			ImportedInputs: []*avax.TransferableInput{{
+				UTXOID: utxo.UTXOID,
+				Asset:  utxo.Asset,
+				In:     &secp256k1fx.TransferInput{Amt: 1000},
+			}},
+			Outs: []tx.Output{{
+				Address: common.Address(address),
+				Amount:  900,
+				AssetID: ctx.AVAXAssetID,
+			}},
+		},
+		Creds: []tx.Credential{&secp256k1fx.Credential{}},
+	}
+	hTx, err := newHookTx(canonicalTx, ctx.AVAXAssetID)
+	require.NoError(err)
+
+	// The bid this transaction actually offers, so the bounds below are
+	// expressed against it rather than against amounts guessed in advance.
+	bid := hTx.op.GasFeeCap
+
+	newBuilder := func() *builder {
+		return &builder{
+			ctx: ctx,
+			potentialTxs: func(yield func(*hookTx) bool) {
+				yield(hTx)
+			},
+		}
+	}
+	collect := func(baseFee *uint256.Int) []*hookTx {
+		parent := common.Hash(ids.GenerateTestID())
+		building := &types.Header{
+			Number:     big.NewInt(1),
+			ParentHash: parent,
+			BaseFee:    baseFee.ToBig(),
+		}
+		return slices.Collect(newBuilder().PotentialEndOfBlockOps(
+			t.Context(),
+			building,
+			parent, // settled == parent, so the ancestor range is empty
+			nil,
+		))
+	}
+
+	// The smallest bid this transaction can express; the ceiling is never
+	// allowed below it.
+	minimumBid := tx.ScaleAVAX(1)
+	minimumBid.Div(&minimumBid, uint256.NewInt(uint64(hTx.op.Gas)))
+	require.NoError(warpfx.VerifyCanonicalBid(&bid, &bid, &minimumBid))
+
+	// Bidding the base fee itself is within the ceiling.
+	require.Len(collect(&bid), 1)
+
+	// Bidding k times it is still exactly at the ceiling.
+	atCeiling := new(uint256.Int).Div(&bid, uint256.NewInt(warpfx.MaxFeeOverpaymentFactor))
+	require.Len(collect(atCeiling), 1)
+
+	// Bidding more is refused, and the transaction is simply not yielded.
+	overCeiling := new(uint256.Int).Div(&bid, uint256.NewInt(warpfx.MaxFeeOverpaymentFactor+1))
+	require.Empty(collect(overCeiling))
+
+	// The symmetry that matters, and the reason this ceiling is expressed as a
+	// multiple of the base fee rather than against an absolute fee: both
+	// refusals bear on the same quantity, o.GasFeeCap, against the same
+	// reference, s.baseFee. The floor is core.ErrFeeCapTooLow, applied by SAE's
+	// own worst-case state; the builder only bounds the top, so a transaction
+	// bidding *below* the base fee is still yielded here and rejected
+	// downstream.
+	underBaseFee := new(uint256.Int).Mul(&bid, uint256.NewInt(2))
+	require.Len(collect(underBaseFee), 1)
 }

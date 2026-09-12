@@ -27,6 +27,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/vms/evm/acp226"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/dynamic"
+	"github.com/ava-labs/avalanchego/vms/saevm/cchain/precompile/nativeexport"
 
 	corethparams "github.com/ava-labs/avalanchego/graft/coreth/params"
 	avalancheutils "github.com/ava-labs/avalanchego/utils"
@@ -126,6 +127,14 @@ func parseGenesis(ctx *snow.Context, b []byte) (*genesis, error) {
 					{
 						Config: warp.NewDefaultConfig(
 							utils.TimeToNewUint64(u.DurangoTime),
+						),
+					},
+					{
+						// Turns on with warp UTXOs themselves: an export the
+						// P-Chain would refuse to decode has no reason to be
+						// buildable.
+						Config: nativeexport.NewConfig(
+							utils.TimeToNewUint64(u.HeliconTime),
 						),
 					},
 				},

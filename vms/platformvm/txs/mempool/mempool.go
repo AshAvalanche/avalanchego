@@ -209,7 +209,10 @@ func (m *Mempool) meter(tx *platform.Tx) (meteredTx, error) {
 		return meteredTx{}, errAVAXMinted
 	}
 
-	c, err := fee.TxComplexity(tx.Unsigned)
+	// Signed complexity, not unsigned: a Warp authorization lives in the
+	// credentials, and metering the unsigned form would let an authorized
+	// transaction take more room than the gas it is charged for.
+	c, err := fee.SignedTxComplexity(tx)
 	if err != nil {
 		return meteredTx{}, err
 	}

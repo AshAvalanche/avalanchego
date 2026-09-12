@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
+	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
 	"github.com/ava-labs/avalanchego/vms/platformvm/state"
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs/fee"
@@ -539,6 +540,14 @@ func verifyAddPermissionlessValidatorTx(
 		return err
 	}
 
+	// Above the bootstrap guard below, which returns nil outright - flow check
+	// included. See resolveAuthorization for why every call site is placed this
+	// way.
+	fxCtx, err := resolveAuthorization(sTx, uint64(currentTimestamp.Unix()))
+	if err != nil {
+		return err
+	}
+
 	if !backend.Bootstrapped.Get() {
 		return nil
 	}
@@ -619,8 +628,11 @@ func verifyAddPermissionlessValidatorTx(
 		return fmt.Errorf("getting utxos %w", err)
 	}
 
-	// Verify the flowcheck
-	fee, err := feeCalculator.CalculateFee(tx)
+	// Verify the flowcheck.
+	//
+	// From the signed transaction: a Warp authorization lives in the
+	// credentials and is invisible from the unsigned form.
+	fee, err := feeCalculator.CalculateFeeWithCredentials(sTx)
 	if err != nil {
 		return err
 	}
@@ -630,7 +642,8 @@ func verifyAddPermissionlessValidatorTx(
 		return fmt.Errorf("adding fee: %w", err)
 	}
 
-	if err := backend.FlowChecker.VerifySpend(
+	if err := backend.FlowChecker.VerifySpendWithContext(
+		fxCtx,
 		tx,
 		chainState,
 		ins,
@@ -665,6 +678,14 @@ func verifyAddPermissionlessDelegatorTx(
 		isDurangoActive  = backend.Config.UpgradeConfig.IsDurangoActivated(currentTimestamp)
 	)
 	if err := avax.VerifyMemoFieldLength(tx.Memo, isDurangoActive); err != nil {
+		return err
+	}
+
+	// Above the bootstrap guard below, which returns nil outright - flow check
+	// included. See resolveAuthorization for why every call site is placed this
+	// way.
+	fxCtx, err := resolveAuthorization(sTx, uint64(currentTimestamp.Unix()))
+	if err != nil {
 		return err
 	}
 
@@ -773,8 +794,11 @@ func verifyAddPermissionlessDelegatorTx(
 		return fmt.Errorf("getting utxos %w", err)
 	}
 
-	// Verify the flowcheck
-	fee, err := feeCalculator.CalculateFee(tx)
+	// Verify the flowcheck.
+	//
+	// From the signed transaction: a Warp authorization lives in the
+	// credentials and is invisible from the unsigned form.
+	fee, err := feeCalculator.CalculateFeeWithCredentials(sTx)
 	if err != nil {
 		return err
 	}
@@ -784,7 +808,8 @@ func verifyAddPermissionlessDelegatorTx(
 		return fmt.Errorf("adding fee: %w", err)
 	}
 
-	if err := backend.FlowChecker.VerifySpend(
+	if err := backend.FlowChecker.VerifySpendWithContext(
+		fxCtx,
 		tx,
 		chainState,
 		ins,
@@ -892,6 +917,13 @@ func verifyAddAutoRenewedValidatorTx(
 		return err
 	}
 
+	// Above the bootstrap guard below, which returns early - see
+	// resolveAuthorization.
+	fxCtx, err := resolveAuthorization(sTx, uint64(chainState.GetTimestamp().Unix()))
+	if err != nil {
+		return err
+	}
+
 	if !backend.Bootstrapped.Get() {
 		// Not bootstrapped yet -- don't need to do full verification.
 		return nil
@@ -945,9 +977,10 @@ func verifyAddAutoRenewedValidatorTx(
 
 	if err := verifySpend(
 		backend,
+		fxCtx,
 		feeCalculator,
 		chainState,
-		tx,
+		sTx,
 		sTx.Creds,
 	); err != nil {
 		return err
@@ -973,6 +1006,13 @@ func verifySetAutoRenewedValidatorConfigTx(
 	}
 
 	if err := avax.VerifyMemoFieldLength(tx.Memo, true /*=isDurangoActive*/); err != nil {
+		return nil, err
+	}
+
+	// Above the bootstrap guard below, which returns early - see
+	// resolveAuthorization.
+	fxCtx, err := resolveAuthorization(sTx, uint64(chainState.GetTimestamp().Unix()))
+	if err != nil {
 		return nil, err
 	}
 
@@ -1014,16 +1054,31 @@ func verifySetAutoRenewedValidatorConfigTx(
 		return nil, ErrStakeTooLong
 	}
 
-	baseTxCreds, err := verifyAuthorization(backend.Fx, sTx, autoRenewedStakerTx.ValidatorAuthority, tx.Auth)
+	// The only transaction of the list that must also prove a control group's
+	// assent, and the only way out of an auto-renewed stake: Period = 0 stops
+	// the validator at the end of its cycle and unlocks the funds.
+	//
+	// One message authorizes both. It commits to the bytes of the whole
+	// transaction, so there is nothing to duplicate: the same context reaches
+	// the permission path and the flow check, and warpfx runs the same
+	// provenance test on each.
+	baseTxCreds, err := verifyAuthorizationWithContext(
+		backend.Fxs,
+		fxCtx,
+		sTx,
+		autoRenewedStakerTx.ValidatorAuthority,
+		tx.Auth,
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	if err := verifySpend(
 		backend,
+		fxCtx,
 		feeCalculator,
 		chainState,
-		tx,
+		sTx,
 		baseTxCreds,
 	); err != nil {
 		return nil, err
@@ -1051,19 +1106,25 @@ func verifyStakerStartTime(isDurangoActive bool, chainTime, stakerTime time.Time
 	return nil
 }
 
+// verifySpend takes the signed transaction and the credentials separately,
+// because they are not the same list. The fee is priced over sTx.Creds - the
+// carrier of a Warp authorization may be any slot, the last one included, and
+// pricing a trimmed list would let a message in that slot travel for free -
+// while [creds] is what the flow check is allowed to spend against.
 func verifySpend(
 	backend *Backend,
+	fxCtx *fx.Context,
 	feeCalculator fee.Calculator,
 	chainState state.Chain,
-	tx platform.UnsignedTx,
+	sTx *platform.Tx,
 	creds []verify.Verifiable,
 ) error {
-	ins, outs, producedAVAX, err := utxo.GetInputOutputs(tx)
+	ins, outs, producedAVAX, err := utxo.GetInputOutputs(sTx.Unsigned)
 	if err != nil {
 		return fmt.Errorf("getting utxos: %w", err)
 	}
 
-	txFee, err := feeCalculator.CalculateFee(tx)
+	txFee, err := feeCalculator.CalculateFeeWithCredentials(sTx)
 	if err != nil {
 		return fmt.Errorf("calculating fee: %w", err)
 	}
@@ -1073,8 +1134,9 @@ func verifySpend(
 		return fmt.Errorf("adding fee: %w", err)
 	}
 
-	if err := backend.FlowChecker.VerifySpend(
-		tx,
+	if err := backend.FlowChecker.VerifySpendWithContext(
+		fxCtx,
+		sTx.Unsigned,
 		chainState,
 		ins,
 		outs,

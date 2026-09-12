@@ -476,7 +476,8 @@ func packEtnaBlockTxs(
 			break
 		}
 
-		txComplexity, err := fee.TxComplexity(tx.Unsigned)
+		// Signed complexity - see the note in block/executor/verifier.go.
+		txComplexity, err := fee.SignedTxComplexity(tx)
 		if err != nil {
 			return nil, err
 		}
@@ -546,7 +547,7 @@ func executeTx(
 		backend.Ctx.NetworkID,
 		backend.Ctx.ValidatorState,
 		pChainHeight,
-		tx.Unsigned,
+		tx,
 	)
 	if err != nil {
 		backend.Ctx.Log.Debug("transaction failed warp verification",
