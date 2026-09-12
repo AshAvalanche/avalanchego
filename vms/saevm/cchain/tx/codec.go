@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 )
 
 const codecVersion uint16 = 0
@@ -46,6 +47,21 @@ func init() {
 	lc.SkipRegistrations(1)
 	errs.Add(
 		lc.RegisterType(&secp256k1fx.Credential{}),
+	)
+	// Skip from 10 up to 43 so that warpfx.TransferOutput lands on 44, its
+	// position in the PlatformVM codec.
+	//
+	// Only the output is registered here. An Owner only ever appears embedded
+	// in it, so it carries no identifier of its own, and a warpfx credential
+	// has no currency on the atomic path - an input that presents nothing is an
+	// empty secp256k1fx.Credential, the one encoding both codecs agree on.
+	//
+	// Note this offset is not coreth's: its atomic codec stops at 11, having
+	// registered secp256k1fx.Input and OutputOwners, and would need 32. Code
+	// mentioning 32 is not wrong, it is the other VM.
+	lc.SkipRegistrations(34)
+	errs.Add(
+		lc.RegisterType(&warpfx.TransferOutput{}),
 		c.RegisterCodec(codecVersion, lc),
 	)
 	if errs.Errored() {

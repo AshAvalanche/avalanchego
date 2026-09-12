@@ -20,3 +20,9 @@ func NewSimpleCalculator(fee uint64) *SimpleCalculator {
 func (c *SimpleCalculator) CalculateFee(platform.UnsignedTx) (uint64, error) {
 	return c.txFee, nil
 }
+
+// CalculateFeeWithCredentials ignores the credentials: this calculator charges
+// a flat fee, which is what the chain did before dynamic fees.
+func (c *SimpleCalculator) CalculateFeeWithCredentials(*platform.Tx) (uint64, error) {
+	return c.txFee, nil
+}

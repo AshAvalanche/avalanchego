@@ -131,7 +131,15 @@ func rootKey(height uint64) []byte {
 // operations to shared memory.
 //
 // Apply is a noop when height is not higher than [State.CurrentHeight].
-func (s *State) Apply(height uint64, txs []*tx.Tx) error {
+// [extra] carries shared-memory operations that belong to no atomic
+// transaction - those the export precompile derives from a block's logs. They
+// are merged into the trie and applied to shared memory like any other, but
+// they have nothing to record in the transaction index below.
+//
+// ⚠️ That index serves the API (GetAtomicTx) and reprocessing, not consensus,
+// so an operation absent from it is an API gap, not a divergence. Said here so
+// nobody tries to fabricate a transaction to fill the hole.
+func (s *State) Apply(height uint64, txs []*tx.Tx, extra map[ids.ID]*chainsatomic.Requests) error {
 	if currentHeight := s.currentHeight.Load(); height <= currentHeight {
 		// During restarts, it is expected for SAE to reprocess already-applied
 		// heights. Shared memory is not safe to apply multiple times for the
@@ -147,6 +155,7 @@ func (s *State) Apply(height uint64, txs []*tx.Tx) error {
 	if err != nil {
 		return fmt.Errorf("merging atomic ops: %w", err)
 	}
+	mergeRequests(ops, extra)
 
 	var (
 		isBonus = isBonusBlock(s.snowCtx.NetworkID, height)
@@ -212,6 +221,19 @@ func (s *State) commit(batch database.Batch, height uint64, ops map[ids.ID]*chai
 }
 
 // atomicRequests groups the atomic requests from txs by chainID.
+// mergeRequests folds [extra] into [ops], appending after the transactions'
+// own operations so the trie stays byte-identical for a given block.
+func mergeRequests(ops, extra map[ids.ID]*chainsatomic.Requests) {
+	for chainID, req := range extra {
+		if existing, ok := ops[chainID]; ok {
+			existing.PutRequests = append(existing.PutRequests, req.PutRequests...)
+			existing.RemoveRequests = append(existing.RemoveRequests, req.RemoveRequests...)
+			continue
+		}
+		ops[chainID] = req
+	}
+}
+
 func atomicRequests(txs []*tx.Tx) (map[ids.ID]*chainsatomic.Requests, error) {
 	// To produce a byte-identical trie, txs must be merged in txID order.
 	// This matches the order they were originally read from the tx index when

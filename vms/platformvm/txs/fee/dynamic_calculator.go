@@ -39,6 +39,18 @@ func (c *dynamicCalculator) CalculateFee(tx platform.UnsignedTx) (uint64, error)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrCalculatingComplexity, err)
 	}
+	return c.priceOf(complexity)
+}
+
+func (c *dynamicCalculator) CalculateFeeWithCredentials(tx *platform.Tx) (uint64, error) {
+	complexity, err := SignedTxComplexity(tx)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrCalculatingComplexity, err)
+	}
+	return c.priceOf(complexity)
+}
+
+func (c *dynamicCalculator) priceOf(complexity gas.Dimensions) (uint64, error) {
 	gas, err := complexity.ToGas(c.weights)
 	if err != nil {
 		return 0, fmt.Errorf(

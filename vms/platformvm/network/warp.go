@@ -43,13 +43,23 @@ const (
 	ErrImpossibleNonce
 	ErrWrongNonce
 	ErrWrongWeight
+
+	ErrTxDoesNotExist
+	ErrTxNotCommitted
+	ErrMismatchedAuthHash
+	ErrTxHasNoWarpCredential
+	ErrNotAStakingTx
+	ErrStakingNotSettled
+	ErrNotACycleTx
+	ErrRewardsNotSorted
+	ErrMismatchedRewards
 )
 
 var _ acp118.Verifier = (*signatureRequestVerifier)(nil)
 
 type signatureRequestVerifier struct {
 	stateLock sync.Locker
-	state     state.Chain
+	state     Chain
 }
 
 func (s signatureRequestVerifier) Verify(
@@ -86,6 +96,12 @@ func (s signatureRequestVerifier) Verify(
 		return s.verifyL1ValidatorRegistration(payload, justification)
 	case *message.L1ValidatorWeight:
 		return s.verifyL1ValidatorWeight(payload)
+	case *message.TxExecuted:
+		return s.verifyTxExecuted(payload)
+	case *message.StakeSettled:
+		return s.verifyStakeSettled(payload)
+	case *message.CycleSettled:
+		return s.verifyCycleSettled(payload)
 	default:
 		return &common.AppError{
 			Code:    ErrUnsupportedWarpAddressedCallPayloadType,

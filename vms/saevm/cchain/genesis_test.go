@@ -27,6 +27,7 @@ import (
 	"github.com/ava-labs/avalanchego/upgrade"
 	"github.com/ava-labs/avalanchego/upgrade/upgradetest"
 	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/vms/saevm/cchain/precompile/nativeexport"
 	"github.com/ava-labs/avalanchego/vms/saevm/cmputils"
 
 	avalanchegenesis "github.com/ava-labs/avalanchego/genesis"
@@ -115,6 +116,11 @@ func TestParseGenesis(t *testing.T) {
 										avalancheutils.PointerTo[uint64](1709740800), // Durango
 									),
 								},
+								{
+									Config: nativeexport.NewConfig(
+										avalancheutils.PointerTo[uint64](1790089200), // Helicon
+									),
+								},
 							},
 						},
 					},
@@ -182,6 +188,11 @@ func TestParseGenesis(t *testing.T) {
 										avalancheutils.PointerTo[uint64](1707840000), // Durango
 									),
 								},
+								{
+									Config: nativeexport.NewConfig(
+										avalancheutils.PointerTo[uint64](1785250800), // Helicon
+									),
+								},
 							},
 						},
 					},
@@ -247,6 +258,11 @@ func TestParseGenesis(t *testing.T) {
 								{
 									Config: warp.NewDefaultConfig(
 										initiallyActive, // Durango
+									),
+								},
+								{
+									Config: nativeexport.NewConfig(
+										unscheduled, // Helicon
 									),
 								},
 							},

@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/config"
+	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
 	"github.com/ava-labs/avalanchego/vms/platformvm/state"
 	"github.com/ava-labs/avalanchego/vms/platformvm/state/statetest"
@@ -453,7 +454,11 @@ func TestVerifyAddPermissionlessValidatorTx(t *testing.T) {
 				bootstrapped.Set(true)
 
 				flowChecker := utxomock.NewVerifier(ctrl)
-				flowChecker.EXPECT().VerifySpend(
+				flowChecker.EXPECT().VerifySpendWithContext(
+					// A transaction carrying no Warp credential still resolves
+					// a context - an empty one, which closes every warpfx path
+					// it reaches.
+					&fx.Context{},
 					gomock.Any(),
 					gomock.Any(),
 					gomock.Any(),
@@ -499,7 +504,11 @@ func TestVerifyAddPermissionlessValidatorTx(t *testing.T) {
 				bootstrapped.Set(true)
 
 				flowChecker := utxomock.NewVerifier(ctrl)
-				flowChecker.EXPECT().VerifySpend(
+				flowChecker.EXPECT().VerifySpendWithContext(
+					// A transaction carrying no Warp credential still resolves
+					// a context - an empty one, which closes every warpfx path
+					// it reaches.
+					&fx.Context{},
 					gomock.Any(),
 					gomock.Any(),
 					gomock.Any(),

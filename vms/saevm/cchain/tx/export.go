@@ -160,7 +160,7 @@ func (e *Export) sanityCheck(ctx *snow.Context) error {
 		return errOutputsNotSorted
 	}
 
-	return nil
+	return verifyWarpExportDestination(e)
 }
 
 var (
@@ -171,14 +171,17 @@ var (
 	errAddressMismatch        = errors.New("signature does not match address")
 )
 
-func (e *Export) verifyCredentials(_ chainsatomic.SharedMemory, creds []Credential) error {
+// verifyCredentials returns false for canonicality: an export is always signed
+// by whoever holds the EVM balance being debited, warpfx output or not. The
+// Fx dispatch below is a hard secp256k1 key recovery, unchanged.
+func (e *Export) verifyCredentials(_ *snow.Context, _ chainsatomic.SharedMemory, creds []Credential) (bool, error) {
 	if len(e.Ins) != len(creds) {
-		return fmt.Errorf("%w: want %d, got %d", errIncorrectNumCredentials, len(e.Ins), len(creds))
+		return false, fmt.Errorf("%w: want %d, got %d", errIncorrectNumCredentials, len(e.Ins), len(creds))
 	}
 
 	fxTx, err := toFxTx(e)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errConvertingToFxTx, err)
+		return false, fmt.Errorf("%w: %w", errConvertingToFxTx, err)
 	}
 	for i, in := range e.Ins {
 		// TODO(StephenButtolph): Parallelize signature verification. This is
@@ -186,17 +189,17 @@ func (e *Export) verifyCredentials(_ chainsatomic.SharedMemory, creds []Credenti
 		// signatures, which are currently being cached.
 		cred := creds[i].Self()
 		if len(cred.Sigs) != 1 {
-			return fmt.Errorf("%w (%d): want 1, got %d", errIncorrectNumSignatures, i, len(cred.Sigs))
+			return false, fmt.Errorf("%w (%d): want 1, got %d", errIncorrectNumSignatures, i, len(cred.Sigs))
 		}
 		pk, err := sigCache.RecoverPublicKey(fxTx.Bytes(), cred.Sigs[0][:])
 		if err != nil {
-			return fmt.Errorf("%w (%d): %w", errRecoveringPublicKey, i, err)
+			return false, fmt.Errorf("%w (%d): %w", errRecoveringPublicKey, i, err)
 		}
 		if addr := pk.EthAddress(); in.Address != addr {
-			return fmt.Errorf("%w (%d): want %s, got %s", errAddressMismatch, i, in.Address, addr)
+			return false, fmt.Errorf("%w (%d): want %s, got %s", errAddressMismatch, i, in.Address, addr)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (e *Export) numSigs() (uint64, error) {

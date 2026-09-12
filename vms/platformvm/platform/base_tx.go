@@ -63,7 +63,7 @@ func (tx *BaseTx) InitCtx(ctx *snow.Context) {
 		in.FxID = secp256k1fx.ID
 	}
 	for _, out := range tx.BaseTx.Outs {
-		out.FxID = secp256k1fx.ID
+		out.FxID = outputFxID(out)
 		out.InitCtx(ctx)
 	}
 }

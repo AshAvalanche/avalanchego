@@ -55,6 +55,9 @@ func (tx *TransferSubnetOwnershipTx) SyntacticVerify(ctx *snow.Context) error {
 	if err := verify.All(tx.SubnetAuth, tx.Owner); err != nil {
 		return err
 	}
+	if err := verifySubnetOwner(tx.Owner); err != nil {
+		return err
+	}
 
 	tx.SyntacticallyVerified = true
 	return nil

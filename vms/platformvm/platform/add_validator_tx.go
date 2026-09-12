@@ -15,7 +15,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
 	"github.com/ava-labs/avalanchego/vms/platformvm/reward"
-	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 )
 
 var (
@@ -47,7 +46,7 @@ type AddValidatorTx struct {
 func (tx *AddValidatorTx) InitCtx(ctx *snow.Context) {
 	tx.BaseTx.InitCtx(ctx)
 	for _, out := range tx.StakeOuts {
-		out.FxID = secp256k1fx.ID
+		out.FxID = outputFxID(out)
 		out.InitCtx(ctx)
 	}
 	tx.RewardsOwner.InitCtx(ctx)

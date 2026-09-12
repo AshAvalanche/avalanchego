@@ -11,7 +11,6 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/platformvm/stakeable"
-	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 )
 
 var (
@@ -38,7 +37,7 @@ type ExportTx struct {
 func (tx *ExportTx) InitCtx(ctx *snow.Context) {
 	tx.BaseTx.InitCtx(ctx)
 	for _, out := range tx.ExportedOutputs {
-		out.FxID = secp256k1fx.ID
+		out.FxID = outputFxID(out)
 		out.InitCtx(ctx)
 	}
 }

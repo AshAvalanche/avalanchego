@@ -1,0 +1,58 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("//.bazel:defs.bzl", "go_test")
+
+package(default_visibility = [
+    "//vms/saevm/cchain:__subpackages__",
+    "//vms/saevm/cchain:external_consumers",
+])
+
+go_library(
+    name = "nativeexport",
+    srcs = [
+        "config.go",
+        "contract.go",
+        "module.go",
+        "receipts.go",
+    ],
+    importpath = "github.com/ava-labs/avalanchego/vms/saevm/cchain/precompile/nativeexport",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//chains/atomic",
+        "//graft/coreth/precompile/contract",
+        "//graft/coreth/precompile/modules",
+        "//graft/coreth/precompile/precompileconfig",
+        "//ids",
+        "//utils/constants",
+        "//vms/components/avax",
+        "//vms/saevm/cchain/tx",
+        "//vms/warpfx",
+        "@com_github_ava_labs_libevm//common",
+        "@com_github_ava_labs_libevm//core/types",
+        "@com_github_ava_labs_libevm//core/vm",
+        "@com_github_ava_labs_libevm//crypto",
+        "@com_github_ava_labs_libevm//libevm/stateconf",
+        "@com_github_holiman_uint256//:uint256",
+    ],
+)
+
+go_test(
+    name = "nativeexport_test",
+    srcs = [
+        "contract_test.go",
+        "helpers_test.go",
+        "selector_test.go",
+    ],
+    embed = [":nativeexport"],
+    deps = [
+        "//ids",
+        "//utils/constants",
+        "//vms/components/avax",
+        "//vms/warpfx",
+        "@com_github_ava_labs_libevm//common",
+        "@com_github_ava_labs_libevm//core/types",
+        "@com_github_ava_labs_libevm//crypto",
+        "@com_github_ava_labs_libevm//libevm/stateconf",
+        "@com_github_holiman_uint256//:uint256",
+        "@com_github_stretchr_testify//require",
+    ],
+)

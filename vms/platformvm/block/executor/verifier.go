@@ -535,7 +535,12 @@ func (v *verifier) processStandardTxs(txs []*platform.Tx, feeCalculator txfee.Ca
 	if timestamp := diff.GetTimestamp(); v.txExecutorBackend.Config.UpgradeConfig.IsEtnaActivated(timestamp) {
 		var blockComplexity gas.Dimensions
 		for _, tx := range txs {
-			txComplexity, err := txfee.TxComplexity(tx.Unsigned)
+			// Signed complexity: excluding the credential here would let a
+			// block hold more authorized transactions than its gas target
+			// allows, and the message carries txBytes, so the gap is not
+			// marginal. The symptom would be a heavier block, not a rejected
+			// transaction - nobody connects that to a credential.
+			txComplexity, err := txfee.SignedTxComplexity(tx)
 			if err != nil {
 				txID := tx.ID()
 				v.MarkDropped(txID, err)

@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/stakeable"
 	"github.com/ava-labs/avalanchego/vms/platformvm/warp"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 )
 
 // Signature verification costs were conservatively based on benchmarks run on
@@ -48,6 +49,13 @@ const (
 
 	intrinsicSECP256k1FxOutputBandwidth = wrappers.LongLen + // amount
 		intrinsicSECP256k1FxOutputOwnersBandwidth
+
+	intrinsicWarpFxOwnerBandwidth = ids.IDLen + // sourceChainID
+		wrappers.IntLen + // num sourceAddress bytes
+		warpfx.AddressLen // sourceAddress
+
+	intrinsicWarpFxOutputBandwidth = wrappers.LongLen + // amount
+		intrinsicWarpFxOwnerBandwidth
 
 	intrinsicInputBandwidth = ids.IDLen + // txID
 		wrappers.IntLen + // output index
@@ -290,9 +298,17 @@ func OutputComplexity(outs ...*avax.TransferableOutput) (gas.Dimensions, error) 
 	return complexity, nil
 }
 
+// outputComplexity returns the complexity an output adds to a transaction.
+//
+// The dispatch here is worth knowing about: an output type that is not priced
+// does not get rejected by the verifier, it makes the *fee calculation* fail,
+// so the transaction dies with a message about complexity rather than about an
+// unknown type. Adding an output type to this chain therefore means pricing it
+// explicitly - and nothing at all on the C-chain, whose gas counts bytes and
+// signatures without knowing types.
 func outputComplexity(out *avax.TransferableOutput) (gas.Dimensions, error) {
 	complexity := gas.Dimensions{
-		gas.Bandwidth: intrinsicOutputBandwidth + intrinsicSECP256k1FxOutputBandwidth,
+		gas.Bandwidth: intrinsicOutputBandwidth,
 		gas.DBWrite:   intrinsicOutputDBWrite,
 	}
 
@@ -302,18 +318,30 @@ func outputComplexity(out *avax.TransferableOutput) (gas.Dimensions, error) {
 		outIntf = stakeableOut.TransferableOut
 	}
 
-	secp256k1Out, ok := outIntf.(*secp256k1fx.TransferOutput)
-	if !ok {
+	switch typedOut := outIntf.(type) {
+	case *secp256k1fx.TransferOutput:
+		numAddresses := uint64(len(typedOut.Addrs))
+		addressBandwidth, err := math.Mul(numAddresses, ids.ShortIDLen)
+		if err != nil {
+			return gas.Dimensions{}, err
+		}
+		bandwidth, err := math.Add(intrinsicSECP256k1FxOutputBandwidth, addressBandwidth)
+		if err != nil {
+			return gas.Dimensions{}, err
+		}
+		complexity[gas.Bandwidth], err = math.Add(complexity[gas.Bandwidth], bandwidth)
+		return complexity, err
+
+	case *warpfx.TransferOutput:
+		// Nothing variable to add: the source address is pinned to twenty
+		// bytes, so a warpfx output is a fixed size.
+		var err error
+		complexity[gas.Bandwidth], err = math.Add(complexity[gas.Bandwidth], intrinsicWarpFxOutputBandwidth)
+		return complexity, err
+
+	default:
 		return gas.Dimensions{}, errUnsupportedOutput
 	}
-
-	numAddresses := uint64(len(secp256k1Out.Addrs))
-	addressBandwidth, err := math.Mul(numAddresses, ids.ShortIDLen)
-	if err != nil {
-		return gas.Dimensions{}, err
-	}
-	complexity[gas.Bandwidth], err = math.Add(complexity[gas.Bandwidth], addressBandwidth)
-	return complexity, err
 }
 
 // InputComplexity returns the complexity inputs add to a transaction.
@@ -419,6 +447,19 @@ func convertSubnetToL1ValidatorComplexity(l1Validator *platform.ConvertSubnetToL
 // OwnerComplexity returns the complexity an owner adds to a transaction.
 // It does not include the typeID of the owner.
 func OwnerComplexity(ownerIntf fx.Owner) (gas.Dimensions, error) {
+	// A warp owner is a legitimate rewards owner, and a legitimate
+	// ValidatorAuthority for an auto-renewed validator - that is how a contract
+	// gets its stake back, through Period = 0. It is *not* a legitimate subnet
+	// owner, and that is refused in CreateSubnetTx and
+	// TransferSubnetOwnershipTx rather than here: leaving the fee calculation
+	// to do the refusing by accident would hide the rule, and lose it the first
+	// time another fx.Owner type is priced.
+	if _, ok := ownerIntf.(*warpfx.Owner); ok {
+		return gas.Dimensions{
+			gas.Bandwidth: intrinsicWarpFxOwnerBandwidth,
+		}, nil
+	}
+
 	owner, ok := ownerIntf.(*secp256k1fx.OutputOwners)
 	if !ok {
 		return gas.Dimensions{}, errUnsupportedOwner

@@ -19,6 +19,7 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
+	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 
 	_ "embed"
@@ -36,11 +37,13 @@ import (
 	"github.com/ava-labs/avalanchego/vms/evm/acp176"
 	"github.com/ava-labs/avalanchego/vms/evm/acp226"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/dynamic"
+	"github.com/ava-labs/avalanchego/vms/saevm/cchain/precompile/nativeexport"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/tx"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/txpool"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/warp"
 	"github.com/ava-labs/avalanchego/vms/saevm/gastime"
 	"github.com/ava-labs/avalanchego/vms/saevm/hook"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 	"github.com/ava-labs/avalanchego/x/blockdb"
 
 	corethparams "github.com/ava-labs/avalanchego/graft/coreth/params"
@@ -252,9 +255,22 @@ func (*hooks) CanExecuteTransaction(common.Address, *common.Address, libevm.Stat
 }
 
 func (h *hooks) StartExecutingBlock(rules params.Rules, statedb *state.StateDB, parent *types.Header, _ *types.Block) error {
-	config := corethparams.GetExtra(h.chainConfig)
-	if isFirstDurangoBlock := corethparams.GetRulesExtra(rules).IsDurango && !config.IsDurango(parent.Time); isFirstDurangoBlock {
+	var (
+		config     = corethparams.GetExtra(h.chainConfig)
+		rulesExtra = corethparams.GetRulesExtra(rules)
+	)
+	if isFirstDurangoBlock := rulesExtra.IsDurango && !config.IsDurango(parent.Time); isFirstDurangoBlock {
 		activatePrecompile(statedb, corethwarp.ContractAddress)
+	}
+
+	// ⚠️ SAE turns precompiles on here, and only here: it does not run
+	// core.ApplyUpgrades, so nothing else reads PrecompileUpgrades during
+	// execution. Warp survives that because Durango activated it long before
+	// the transition and its code came across in the inherited state; anything
+	// scheduled at or after Helicon has no such luck, and a caller would meet a
+	// bare revert from Solidity's extcodesize check with nothing to point at.
+	if isFirstHeliconBlock := rulesExtra.IsHelicon && !config.IsHelicon(parent.Time); isFirstHeliconBlock {
+		activatePrecompile(statedb, nativeexport.ContractAddress)
 	}
 	return nil
 }
@@ -282,7 +298,14 @@ func (h *hooks) AfterExecutingBlock(b *types.Block, receipts types.Receipts) err
 		return fmt.Errorf("parsing txs: %w", err)
 	}
 
-	if err := h.state.Apply(b.NumberU64(), txs); err != nil {
+	// Derived from this block's logs, and from them alone, so a reverted frame
+	// deposits nothing - see nativeexport.FromReceipts.
+	exported, err := nativeexport.FromReceipts(receipts, h.ctx.AVAXAssetID)
+	if err != nil {
+		return fmt.Errorf("parsing exports from receipts: %w", err)
+	}
+
+	if err := h.state.Apply(b.NumberU64(), txs, exported); err != nil {
 		return fmt.Errorf("applying cross-chain state: %w", err)
 	}
 
@@ -478,12 +501,48 @@ func (b *builder) PotentialEndOfBlockOps(
 			// verified against out-dated state, we need to ensure that import
 			// txs are consuming UTXOs that still exist so that our in-memory
 			// UTXO conflict checks are sufficient.
-			if err := t.tx.VerifyCredentials(b.ctx.SharedMemory); err != nil {
+			canonical, err := t.tx.VerifyCredentials(b.ctx, b.ctx.SharedMemory)
+			if err != nil {
 				b.ctx.Log.Debug("tx failed credential verification",
 					zap.Stringer("txID", t.id),
 					zap.Error(err),
 				)
 				continue
+			}
+
+			// A canonical import is signed by nobody, and here the burned
+			// amount is not a fee but a bid: it becomes an offered gas price.
+			// That displacement makes burning everything *attractive* rather
+			// than merely wasteful - a bid maximizes inclusion priority, so a
+			// submitter in a hurry has a direct interest in destroying the
+			// owner's funds, and this ceiling is the only thing stopping them.
+			//
+			// It lives here because sanityCheck and verifyCredentials never see
+			// a base fee, and not on the common Apply path, where an ordinary
+			// transaction may legitimately overpay. Under rebuild-and-compare
+			// this builder rule is a consensus rule: a block holding an
+			// operation that bids above the ceiling does not rebuild.
+			if canonical {
+				baseFee, overflow := uint256.FromBig(building.BaseFee)
+				if overflow {
+					b.ctx.Log.Debug("base fee overflows",
+						zap.Stringer("txID", t.id),
+					)
+					continue
+				}
+				// The smallest bid this transaction could possibly offer:
+				// one nAVAX of burn, spread over its gas. The ceiling is
+				// never allowed below it, or nothing would be includable at
+				// the chain's minimum gas price.
+				minimumBid := tx.ScaleAVAX(1)
+				minimumBid.Div(&minimumBid, uint256.NewInt(uint64(t.op.Gas)))
+				if err := warpfx.VerifyCanonicalBid(&t.op.GasFeeCap, baseFee, &minimumBid); err != nil {
+					b.ctx.Log.Debug("canonical tx bids too high",
+						zap.Stringer("txID", t.id),
+						zap.Error(err),
+					)
+					continue
+				}
 			}
 
 			if !yield(t) {

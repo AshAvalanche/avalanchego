@@ -81,6 +81,20 @@ func StandardTx(
 	tx *platform.Tx,
 	state *state.Diff,
 ) (set.Set[ids.ID], map[ids.ID]*atomic.Requests, func(), error) {
+	// StandardTx is the one place every standard transaction passes through -
+	// staking transactions included, since Durango - which is what makes it the
+	// right home for a guard no transaction type may forget.
+	if err := VerifyWarpUTXOsActivated(
+		backend.Config.UpgradeConfig,
+		state.GetTimestamp(),
+		tx,
+	); err != nil {
+		return nil, nil, nil, err
+	}
+	if err := verifyWarpOutputsNotLocked(tx); err != nil {
+		return nil, nil, nil, err
+	}
+
 	standardExecutor := standardTxExecutor{
 		backend:       backend,
 		feeCalculator: feeCalculator,
@@ -323,6 +337,14 @@ func (e *standardTxExecutor) ImportTx(tx *platform.ImportTx) error {
 		return err
 	}
 
+	// Above the bootstrap guard below, which skips shared memory and the flow
+	// check together. See resolveAuthorization for why every call site is
+	// placed this way.
+	fxCtx, err := resolveAuthorization(e.tx, uint64(currentTimestamp.Unix()))
+	if err != nil {
+		return err
+	}
+
 	e.inputs = set.NewSet[ids.ID](len(tx.ImportedInputs))
 	utxoIDs := make([][]byte, len(tx.ImportedInputs))
 	for i, in := range tx.ImportedInputs {
@@ -365,28 +387,49 @@ func (e *standardTxExecutor) ImportTx(tx *platform.ImportTx) error {
 			return fmt.Errorf("getting utxos %w", err)
 		}
 
-		// Verify the flowcheck
-		fee, err := e.feeCalculator.CalculateFee(tx)
+		// Verify the flowcheck.
+		//
+		// From the signed transaction: a Warp authorization lives in the
+		// credentials and is invisible from the unsigned form, so pricing it
+		// takes the whole thing.
+		fee, err := e.feeCalculator.CalculateFeeWithCredentials(e.tx)
 		if err != nil {
 			return err
 		}
 
-		producedAVAX, err = math.Add(producedAVAX, fee)
-		if err != nil {
-			return fmt.Errorf("adding fee: %w", err)
-		}
+		// The canonical branch is decided here rather than above the bootstrap
+		// guard, and the difference with resolveAuthorization is deliberate:
+		// that one reads no state, this one needs the UTXOs shared memory just
+		// handed us.
+		if isCanonicalImport(fxCtx, tx, utxos) {
+			if err := verifyCanonicalImport(
+				tx,
+				e.tx.Creds,
+				utxos,
+				e.backend.Ctx.AVAXAssetID,
+				fee,
+			); err != nil {
+				return err
+			}
+		} else {
+			producedAVAX, err = math.Add(producedAVAX, fee)
+			if err != nil {
+				return fmt.Errorf("adding fee: %w", err)
+			}
 
-		if err := e.backend.FlowChecker.VerifySpendUTXOs(
-			tx,
-			utxos,
-			ins,
-			outs,
-			e.tx.Creds,
-			map[ids.ID]uint64{
-				e.backend.Ctx.AVAXAssetID: producedAVAX,
-			},
-		); err != nil {
-			return err
+			if err := e.backend.FlowChecker.VerifySpendUTXOsWithContext(
+				fxCtx,
+				tx,
+				utxos,
+				ins,
+				outs,
+				e.tx.Creds,
+				map[ids.ID]uint64{
+					e.backend.Ctx.AVAXAssetID: producedAVAX,
+				},
+			); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -421,6 +464,23 @@ func (e *standardTxExecutor) ExportTx(tx *platform.ExportTx) error {
 		return err
 	}
 
+	// Unconditional, and deliberately not under the bootstrap guard below: the
+	// rule reads no state, it inspects the transaction. Under the guard, a
+	// bootstrapping node would accept an export it will reject once
+	// bootstrapped - two behaviours for one transaction, which is exactly what
+	// a consensus rule must not do.
+	if err := verifyWarpExportDestination(e.backend.Ctx.CChainID, tx); err != nil {
+		return err
+	}
+
+	// This executor's bootstrap guard below covers only verify.SameSubnet, so
+	// the placement changes nothing here. It is uniform with the others on
+	// purpose: see resolveAuthorization.
+	fxCtx, err := resolveAuthorization(e.tx, uint64(currentTimestamp.Unix()))
+	if err != nil {
+		return err
+	}
+
 	if e.backend.Bootstrapped.Get() {
 		if err := verify.SameSubnet(context.TODO(), e.backend.Ctx, tx.DestinationChain); err != nil {
 			return err
@@ -433,7 +493,7 @@ func (e *standardTxExecutor) ExportTx(tx *platform.ExportTx) error {
 	}
 
 	// Verify the flowcheck
-	fee, err := e.feeCalculator.CalculateFee(tx)
+	fee, err := e.feeCalculator.CalculateFeeWithCredentials(e.tx)
 	if err != nil {
 		return err
 	}
@@ -443,7 +503,8 @@ func (e *standardTxExecutor) ExportTx(tx *platform.ExportTx) error {
 		return fmt.Errorf("adding fee: %w", err)
 	}
 
-	if err := e.backend.FlowChecker.VerifySpend(
+	if err := e.backend.FlowChecker.VerifySpendWithContext(
+		fxCtx,
 		tx,
 		e.state,
 		ins,
@@ -702,13 +763,20 @@ func (e *standardTxExecutor) BaseTx(tx *platform.BaseTx) error {
 		return err
 	}
 
+	// This executor skips nothing while the node bootstraps, so the placement
+	// changes nothing here either. See resolveAuthorization.
+	fxCtx, err := resolveAuthorization(e.tx, uint64(currentTimestamp.Unix()))
+	if err != nil {
+		return err
+	}
+
 	ins, outs, producedAVAX, err := utxo.GetInputOutputs(tx)
 	if err != nil {
 		return fmt.Errorf("getting utxos %w", err)
 	}
 
 	// Verify the flowcheck
-	fee, err := e.feeCalculator.CalculateFee(tx)
+	fee, err := e.feeCalculator.CalculateFeeWithCredentials(e.tx)
 	if err != nil {
 		return err
 	}
@@ -718,7 +786,8 @@ func (e *standardTxExecutor) BaseTx(tx *platform.BaseTx) error {
 		return fmt.Errorf("adding fee: %w", err)
 	}
 
-	if err := e.backend.FlowChecker.VerifySpend(
+	if err := e.backend.FlowChecker.VerifySpendWithContext(
+		fxCtx,
 		tx,
 		e.state,
 		ins,

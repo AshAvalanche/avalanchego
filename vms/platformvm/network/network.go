@@ -20,7 +20,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/platformvm/config"
 	"github.com/ava-labs/avalanchego/vms/platformvm/platform"
-	"github.com/ava-labs/avalanchego/vms/platformvm/state"
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs/mempool"
 	"github.com/ava-labs/avalanchego/vms/platformvm/warp"
 )
@@ -49,7 +48,7 @@ func New(
 	partialSyncPrimaryNetwork bool,
 	appSender common.AppSender,
 	stateLock sync.Locker,
-	state state.Chain,
+	state Chain,
 	signer warp.Signer,
 	registerer prometheus.Registerer,
 	config config.Network,

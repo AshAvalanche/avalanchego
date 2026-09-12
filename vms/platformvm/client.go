@@ -5,6 +5,7 @@ package platformvm
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"time"
@@ -115,6 +116,52 @@ func (c *Client) GetAtomicUTXOs(
 	}
 	endUTXOID, err := ids.FromString(res.EndIndex.UTXO)
 	return utxos, endAddr, endUTXOID, err
+}
+
+// GetWarpOwnerUTXOs returns the byte representation of the UTXOs held by the
+// warp owner (sourceChainID, sourceAddress).
+//
+// An empty [atomicSourceChain] reads this chain's UTXO index; otherwise it
+// reads shared memory for UTXOs exported from that chain.
+//
+// A page may come back shorter than [limit] without the scan being over:
+// entries matching the twenty-byte index but belonging to another owner are
+// dropped. Resume from the returned [ids.ID] cursor.
+func (c *Client) GetWarpOwnerUTXOs(
+	ctx context.Context,
+	sourceChainID ids.ID,
+	sourceAddress ids.ShortID,
+	atomicSourceChain string,
+	limit uint32,
+	startUTXOID ids.ID,
+	options ...rpc.Option,
+) ([][]byte, ids.ID, error) {
+	res := &GetWarpOwnerUTXOsReply{}
+	err := c.Requester.SendRequest(ctx, "platform.getWarpOwnerUTXOs", &GetWarpOwnerUTXOsArgs{
+		SourceChainID:     sourceChainID.String(),
+		SourceAddress:     "0x" + hex.EncodeToString(sourceAddress[:]),
+		AtomicSourceChain: atomicSourceChain,
+		Limit:             json.Uint32(limit),
+		StartIndex: WarpOwnerIndex{
+			SourceAddress: "0x" + hex.EncodeToString(sourceAddress[:]),
+			UTXO:          startUTXOID.String(),
+		},
+		Encoding: formatting.Hex,
+	}, res, options...)
+	if err != nil {
+		return nil, ids.Empty, err
+	}
+
+	utxos := make([][]byte, len(res.UTXOs))
+	for i, utxo := range res.UTXOs {
+		utxoBytes, err := formatting.Decode(res.Encoding, utxo)
+		if err != nil {
+			return nil, ids.Empty, err
+		}
+		utxos[i] = utxoBytes
+	}
+	endUTXOID, err := ids.FromString(res.EndIndex.UTXO)
+	return utxos, endUTXOID, err
 }
 
 // GetSubnetClientResponse is the response from calling GetSubnet on the client

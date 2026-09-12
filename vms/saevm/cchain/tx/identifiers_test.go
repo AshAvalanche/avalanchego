@@ -43,4 +43,13 @@ var (
 	ErrUnmarshallingUTXO      = errUnmarshallingUTXO
 	ErrMismatchedAssetIDs     = errMismatchedAssetIDs
 	ErrVerifyingTransfer      = errVerifyingTransfer
+
+	// warp canonical errors:
+	ErrWarpOutputWrongDestination = errWarpOutputWrongDestination
+	ErrCanonicalMixedOwners       = errCanonicalMixedOwners
+	ErrCanonicalWrongSource       = errCanonicalWrongSource
+	ErrCanonicalAmount            = errCanonicalAmount
+	ErrCanonicalOutputCount       = errCanonicalOutputCount
+	ErrCanonicalWrongOutput       = errCanonicalWrongOutput
+	ErrCanonicalCredential        = errCanonicalCredential
 )

@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/signer"
 	"github.com/ava-labs/avalanchego/vms/platformvm/stakeable"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 )
 
 const CodecVersion = 0
@@ -42,6 +43,7 @@ func init() {
 			registerDurangoTxTypes(c),
 			registerEtnaTxTypes(c),
 			registerHeliconTxTypes(c),
+			RegisterWarpUTXOsTypes(c),
 		)
 	}
 
@@ -155,5 +157,22 @@ func registerHeliconTxTypes(targetCodec linearcodec.Codec) error {
 		targetCodec.RegisterType(&AddAutoRenewedValidatorTx{}),
 		targetCodec.RegisterType(&SetAutoRenewedValidatorConfigTx{}),
 		targetCodec.RegisterType(&RewardAutoRenewedValidatorTx{}),
+	)
+}
+
+// RegisterWarpUTXOsTypes registers the type information for the warpfx types.
+//
+// They are deliberately not part of RegisterHeliconTypes: they do not belong to
+// an upgrade, they belong to the Warp UTXOs proposal. Should the proposal slip
+// to a later upgrade, this function moves as a whole.
+//
+// Registration is unconditional, as it is for every other type here. Gating
+// happens at verification, never at decoding - a node must be able to read a
+// block it is going to reject.
+func RegisterWarpUTXOsTypes(targetCodec linearcodec.Codec) error {
+	return errors.Join(
+		targetCodec.RegisterType(&warpfx.Owner{}),
+		targetCodec.RegisterType(&warpfx.TransferOutput{}),
+		targetCodec.RegisterType(&warpfx.Credential{}),
 	)
 }

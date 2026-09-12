@@ -78,8 +78,11 @@ type Unsigned interface {
 	asOp(avaxAssetID ids.ID) (op, error)
 
 	// verifyCredentials verifies that the transaction is authorized by the
-	// provided credentials.
-	verifyCredentials(sm chainsatomic.SharedMemory, creds []Credential) error
+	// provided credentials, and reports whether it was authorized as a
+	// canonical import - a batch held entirely by one warp owner, which
+	// presents nothing to verify and is bounded by the builder's bid ceiling
+	// instead.
+	verifyCredentials(ctx *snow.Context, sm chainsatomic.SharedMemory, creds []Credential) (canonical bool, err error)
 
 	// atomicRequests returns the operations that should be applied to shared
 	// memory when this transaction is executed.
@@ -242,9 +245,10 @@ func (t *Tx) SanityCheck(ctx *snow.Context) error {
 	return t.Unsigned.sanityCheck(ctx)
 }
 
-// VerifyCredentials verifies that the transaction is properly authorized.
-func (t *Tx) VerifyCredentials(sm chainsatomic.SharedMemory) error {
-	return t.Unsigned.verifyCredentials(sm, t.Creds)
+// VerifyCredentials verifies that the transaction is properly authorized, and
+// reports whether it was authorized as a canonical import.
+func (t *Tx) VerifyCredentials(ctx *snow.Context, sm chainsatomic.SharedMemory) (canonical bool, err error) {
+	return t.Unsigned.verifyCredentials(ctx, sm, t.Creds)
 }
 
 // AtomicRequests returns shared-memory modifications that this transaction

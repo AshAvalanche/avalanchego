@@ -17,10 +17,10 @@ import (
 	"github.com/ava-labs/avalanchego/utils/units"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify/verifymock"
-	"github.com/ava-labs/avalanchego/vms/platformvm/fx/fxmock"
 	"github.com/ava-labs/avalanchego/vms/platformvm/stakeable"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 	"github.com/ava-labs/avalanchego/vms/types"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 )
 
 func TestTransferSubnetOwnershipTxSerialization(t *testing.T) {
@@ -632,19 +632,40 @@ func TestTransferSubnetOwnershipTxSyntacticVerify(t *testing.T) {
 			expectedErr: errInvalidSubnetAuth,
 		},
 		{
+			// A subnet owner must be a concrete secp256k1fx one, so this case
+			// can no longer use a mock: an owner that cannot authorize would
+			// leave the subnet permanently unmanageable.
+			name: "warp owner",
+			txFunc: func(ctrl *gomock.Controller) *TransferSubnetOwnershipTx {
+				validSubnetAuth := verifymock.NewVerifiable(ctrl)
+				validSubnetAuth.EXPECT().Verify().Return(nil)
+				return &TransferSubnetOwnershipTx{
+					Subnet:     ids.GenerateTestID(),
+					BaseTx:     validBaseTx,
+					SubnetAuth: validSubnetAuth,
+					Owner: &warpfx.Owner{
+						SourceChainID: ids.GenerateTestID(),
+						SourceAddress: ids.GenerateTestShortID().Bytes(),
+					},
+				}
+			},
+			expectedErr: ErrWarpOwnerCannotOwnSubnet,
+		},
+		{
 			name: "passes verification",
 			txFunc: func(ctrl *gomock.Controller) *TransferSubnetOwnershipTx {
 				// This SubnetAuth passes verification.
 				validSubnetAuth := verifymock.NewVerifiable(ctrl)
 				validSubnetAuth.EXPECT().Verify().Return(nil)
-				mockOwner := fxmock.NewOwner(ctrl)
-				mockOwner.EXPECT().Verify().Return(nil)
 				return &TransferSubnetOwnershipTx{
 					// Set subnetID so we don't error on that check.
 					Subnet:     ids.GenerateTestID(),
 					BaseTx:     validBaseTx,
 					SubnetAuth: validSubnetAuth,
-					Owner:      mockOwner,
+					Owner: &secp256k1fx.OutputOwners{
+						Threshold: 1,
+						Addrs:     []ids.ShortID{ids.GenerateTestShortID()},
+					},
 				}
 			},
 			expectedErr: nil,

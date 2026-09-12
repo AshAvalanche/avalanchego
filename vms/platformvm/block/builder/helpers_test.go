@@ -47,6 +47,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs/txstest"
 	"github.com/ava-labs/avalanchego/vms/platformvm/utxo"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
+	"github.com/ava-labs/avalanchego/vms/warpfx"
 	"github.com/ava-labs/avalanchego/wallet/chain/p/wallet"
 
 	blockexecutor "github.com/ava-labs/avalanchego/vms/platformvm/block/executor"
@@ -78,7 +79,7 @@ type environment struct {
 	baseDB         *versiondb.Database
 	ctx            *snow.Context
 	msm            *mutableSharedMemory
-	fx             fx.Fx
+	fxs            *fx.Fxs
 	state          *state.State
 	uptimes        uptime.Manager
 	utxosVerifier  utxo.Verifier
@@ -108,7 +109,7 @@ func newEnvironment(t *testing.T, f upgradetest.Fork) *environment { //nolint:un
 	res.ctx.Lock.Lock()
 	defer res.ctx.Lock.Unlock()
 
-	res.fx = defaultFx(t, res.clk, res.ctx.Log, res.isBootstrapped.Get())
+	res.fxs = defaultFxs(t, res.clk, res.ctx.Log, res.isBootstrapped.Get())
 
 	res.state = statetest.New(t, statetest.Config{
 		DB:           res.baseDB,
@@ -120,7 +121,7 @@ func newEnvironment(t *testing.T, f upgradetest.Fork) *environment { //nolint:un
 	})
 
 	res.uptimes = uptime.NewManager(res.state, res.clk)
-	res.utxosVerifier = utxo.NewVerifier(res.ctx, res.clk, res.fx)
+	res.utxosVerifier = utxo.NewVerifier(res.ctx, res.clk, res.fxs)
 
 	genesisID := res.state.GetLastAccepted()
 	res.backend = txexecutor.Backend{
@@ -128,7 +129,8 @@ func newEnvironment(t *testing.T, f upgradetest.Fork) *environment { //nolint:un
 		Ctx:          res.ctx,
 		Clk:          res.clk,
 		Bootstrapped: res.isBootstrapped,
-		Fx:           res.fx,
+		Fx:           res.fxs.Default(),
+		Fxs:          res.fxs,
 		FlowChecker:  res.utxosVerifier,
 		Uptimes:      res.uptimes,
 	}
@@ -331,7 +333,11 @@ func (fvi *fxVMInt) Logger() logging.Logger {
 	return fvi.log
 }
 
-func defaultFx(t *testing.T, clk *mockable.Clock, log logging.Logger, isBootstrapped bool) fx.Fx {
+// defaultFxs mirrors the collection the VM builds: secp256k1fx first, hence the
+// default, and warpfx claiming its own types. Tests wire the same dispatch the
+// node does, so a type resolving to the wrong extension fails here rather than
+// only in production.
+func defaultFxs(t *testing.T, clk *mockable.Clock, log logging.Logger, isBootstrapped bool) *fx.Fxs {
 	require := require.New(t)
 
 	fxVMInt := &fxVMInt{
@@ -339,10 +345,15 @@ func defaultFx(t *testing.T, clk *mockable.Clock, log logging.Logger, isBootstra
 		clk:      clk,
 		log:      log,
 	}
-	res := &secp256k1fx.Fx{}
-	require.NoError(res.Initialize(fxVMInt))
-	if isBootstrapped {
-		require.NoError(res.Bootstrapped())
+	res := fx.NewFxs(
+		fx.Claim{ID: secp256k1fx.ID, Fx: &secp256k1fx.Fx{}},
+		fx.Claim{ID: warpfx.ID, Fx: &warpfx.Fx{}, Types: warpfx.Types()},
+	)
+	for _, claim := range res.All() {
+		require.NoError(claim.Fx.Initialize(fxVMInt))
+		if isBootstrapped {
+			require.NoError(claim.Fx.Bootstrapped())
+		}
 	}
 	return res
 }

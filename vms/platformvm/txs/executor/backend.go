@@ -14,10 +14,18 @@ import (
 )
 
 type Backend struct {
-	Config       *config.Internal
-	Ctx          *snow.Context
-	Clk          *mockable.Clock
-	Fx           fx.Fx
+	Config *config.Internal
+	Ctx    *snow.Context
+	Clk    *mockable.Clock
+
+	// Fx is the default feature extension, and it is not redundant with Fxs.
+	// Subnet authorization resolves nothing - a control group is secp256k1 by
+	// construction - so subnet_tx_verification.go keeps taking a single Fx.
+	Fx fx.Fx
+
+	// Fxs is the collection every spending path dispatches through.
+	Fxs *fx.Fxs
+
 	FlowChecker  utxo.Verifier
 	Uptimes      uptime.Calculator
 	Bootstrapped *utils.Atomic[bool]

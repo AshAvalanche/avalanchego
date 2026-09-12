@@ -38,6 +38,7 @@ var (
 	ErrRemoveStakerTooEarly          = errors.New("attempting to remove staker before their end time")
 	ErrRemoveWrongStaker             = errors.New("attempting to remove wrong staker")
 	ErrInvalidState                  = errors.New("generated output isn't valid state")
+	ErrNoFxForRewardsOwner           = errors.New("no feature extension for the rewards owner")
 	ErrWrongTxType                   = errors.New("wrong transaction type")
 	ErrInvalidID                     = errors.New("invalid ID")
 	ErrProposedAddStakerTxAfterBanff = errors.New("staker transaction proposed after Banff")
@@ -959,7 +960,25 @@ func (e *proposalTxExecutor) newUTXO(
 	outputIndex uint32,
 	asset avax.Asset,
 ) (*avax.UTXO, error) {
-	outIntf, err := e.backend.Fx.CreateOutput(amount, owner)
+	// Resolve on the type of the rewards owner. This is the second dispatch
+	// site, and it does not look like the first: it runs months after the
+	// staking transaction, when the owner is all that is left of it.
+	//
+	// Proposal transactions do not pass through StandardTx, so they never meet
+	// the activation guard. They do not need to: a warpfx output can only come
+	// out of here when the accepted staking transaction named a warpfx rewards
+	// owner, and that transaction did pass the guard. Nothing here composes an
+	// owner of its own, and warpfx.Fx.CreateOutput produces a bare output, never
+	// a stakeable-locked one.
+	//
+	// Never fall back on the default when there is no collection: a Backend
+	// built without one would then mint an output of the wrong type, at a place
+	// where the mistake only surfaces when the funds are spent.
+	resolved := e.backend.Fxs.Get(owner)
+	if resolved == nil {
+		return nil, ErrNoFxForRewardsOwner
+	}
+	outIntf, err := resolved.CreateOutput(amount, owner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create output: %w", err)
 	}

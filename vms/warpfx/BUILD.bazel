@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("//.bazel:defs.bzl", "go_test")
+
+go_library(
+    name = "warpfx",
+    srcs = [
+        "authorization.go",
+        "credential.go",
+        "factory.go",
+        "fee.go",
+        "fx.go",
+        "owner.go",
+        "transfer_output.go",
+        "vm.go",
+    ],
+    importpath = "github.com/ava-labs/avalanchego/vms/warpfx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//codec",
+        "//ids",
+        "//snow",
+        "//utils/logging",
+        "//utils/timer/mockable",
+        "//vms/components/avax",
+        "//vms/components/verify",
+        "//vms/fx",
+        "//vms/platformvm/fx",
+        "//vms/secp256k1fx",
+        "@com_github_holiman_uint256//:uint256",
+    ],
+)
+
+go_test(
+    name = "warpfx_test",
+    srcs = [
+        "authorization_test.go",
+        "fee_test.go",
+        "fx_test.go",
+        "helpers_test.go",
+        "owner_test.go",
+        "transfer_output_test.go",
+    ],
+    embed = [":warpfx"],
+    deps = [
+        "//codec",
+        "//codec/linearcodec",
+        "//ids",
+        "//utils/logging",
+        "//vms/platformvm/fx",
+        "//vms/secp256k1fx",
+        "@com_github_holiman_uint256//:uint256",
+        "@com_github_stretchr_testify//require",
+    ],
+)

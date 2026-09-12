@@ -159,7 +159,7 @@ func (m *manager) VerifyTx(tx *platform.Tx) error {
 		m.ctx.NetworkID,
 		m.ctx.ValidatorState,
 		recommendedPChainHeight,
-		tx.Unsigned,
+		tx,
 	)
 	if err != nil {
 		return fmt.Errorf("failed verifying warp messages: %w", err)
@@ -188,7 +188,8 @@ func (m *manager) VerifyTx(tx *platform.Tx) error {
 	}
 
 	if timestamp := stateDiff.GetTimestamp(); m.txExecutorBackend.Config.UpgradeConfig.IsEtnaActivated(timestamp) {
-		complexity, err := fee.TxComplexity(tx.Unsigned)
+		// Signed complexity - see the note in verifier.go.
+		complexity, err := fee.SignedTxComplexity(tx)
 		if err != nil {
 			return fmt.Errorf("failed to calculate tx complexity: %w", err)
 		}

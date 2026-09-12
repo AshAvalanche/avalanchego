@@ -20,18 +20,23 @@ var _ platform.TxVisitor = (*warpVerifier)(nil)
 
 // VerifyWarpMessages verifies all warp messages in the tx. If any of the warp
 // messages are invalid, an error is returned.
+//
+// It takes the *signed* transaction because a Warp authorization necessarily
+// lives in Creds - the message contains the unsigned transaction's bytes, so
+// putting it inside would require those bytes to contain themselves.
 func VerifyWarpMessages(
 	ctx context.Context,
 	networkID uint32,
 	validatorState validators.State,
 	pChainHeight uint64,
-	tx platform.UnsignedTx,
+	tx *platform.Tx,
 ) error {
-	return tx.Visit(&warpVerifier{
+	return tx.Unsigned.Visit(&warpVerifier{
 		context:        ctx,
 		networkID:      networkID,
 		validatorState: validatorState,
 		pChainHeight:   pChainHeight,
+		tx:             tx,
 	})
 }
 
@@ -40,6 +45,7 @@ type warpVerifier struct {
 	networkID      uint32
 	validatorState validators.State
 	pChainHeight   uint64
+	tx             *platform.Tx
 }
 
 func (*warpVerifier) AddValidatorTx(*platform.AddValidatorTx) error {
@@ -62,12 +68,12 @@ func (*warpVerifier) CreateSubnetTx(*platform.CreateSubnetTx) error {
 	return nil
 }
 
-func (*warpVerifier) ImportTx(*platform.ImportTx) error {
-	return nil
+func (w *warpVerifier) ImportTx(*platform.ImportTx) error {
+	return w.verifyAuthorization()
 }
 
-func (*warpVerifier) ExportTx(*platform.ExportTx) error {
-	return nil
+func (w *warpVerifier) ExportTx(*platform.ExportTx) error {
+	return w.verifyAuthorization()
 }
 
 func (*warpVerifier) AdvanceTimeTx(*platform.AdvanceTimeTx) error {
@@ -86,20 +92,20 @@ func (*warpVerifier) TransformSubnetTx(*platform.TransformSubnetTx) error {
 	return nil
 }
 
-func (*warpVerifier) AddPermissionlessValidatorTx(*platform.AddPermissionlessValidatorTx) error {
-	return nil
+func (w *warpVerifier) AddPermissionlessValidatorTx(*platform.AddPermissionlessValidatorTx) error {
+	return w.verifyAuthorization()
 }
 
-func (*warpVerifier) AddPermissionlessDelegatorTx(*platform.AddPermissionlessDelegatorTx) error {
-	return nil
+func (w *warpVerifier) AddPermissionlessDelegatorTx(*platform.AddPermissionlessDelegatorTx) error {
+	return w.verifyAuthorization()
 }
 
 func (*warpVerifier) TransferSubnetOwnershipTx(*platform.TransferSubnetOwnershipTx) error {
 	return nil
 }
 
-func (*warpVerifier) BaseTx(*platform.BaseTx) error {
-	return nil
+func (w *warpVerifier) BaseTx(*platform.BaseTx) error {
+	return w.verifyAuthorization()
 }
 
 func (*warpVerifier) ConvertSubnetToL1Tx(*platform.ConvertSubnetToL1Tx) error {
@@ -122,12 +128,12 @@ func (w *warpVerifier) SetL1ValidatorWeightTx(tx *platform.SetL1ValidatorWeightT
 	return w.verify(tx.Message)
 }
 
-func (*warpVerifier) AddAutoRenewedValidatorTx(*platform.AddAutoRenewedValidatorTx) error {
-	return nil
+func (w *warpVerifier) AddAutoRenewedValidatorTx(*platform.AddAutoRenewedValidatorTx) error {
+	return w.verifyAuthorization()
 }
 
-func (*warpVerifier) SetAutoRenewedValidatorConfigTx(*platform.SetAutoRenewedValidatorConfigTx) error {
-	return nil
+func (w *warpVerifier) SetAutoRenewedValidatorConfigTx(*platform.SetAutoRenewedValidatorConfigTx) error {
+	return w.verifyAuthorization()
 }
 
 func (*warpVerifier) RewardAutoRenewedValidatorTx(*platform.RewardAutoRenewedValidatorTx) error {
@@ -157,4 +163,25 @@ func (w *warpVerifier) verify(message []byte) error {
 		WarpQuorumNumerator,
 		WarpQuorumDenominator,
 	)
+}
+
+// verifyAuthorization checks the quorum on the Warp authorization the
+// transaction carries, if it carries one.
+//
+// The quorum and nothing else. This verifier does not know the time - its
+// signature carries neither the block timestamp nor the state, and one of its
+// call sites verifies a gossiped transaction outside of any block - so the
+// expiry is not evaluable here. And it is not always run: it is skipped while
+// the node bootstraps, and skipped again at a height whose messages were
+// already verified. That is correct for a quorum, and would be fatal for the
+// commitment, which is why the commitment lives on the execution path instead.
+func (w *warpVerifier) verifyAuthorization() error {
+	cred, err := findWarpAuthorization(w.tx.Creds)
+	if err != nil {
+		return err
+	}
+	if cred == nil {
+		return nil
+	}
+	return w.verify(cred.WarpMessage)
 }

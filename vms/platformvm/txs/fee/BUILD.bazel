@@ -6,6 +6,7 @@ go_library(
     srcs = [
         "calculator.go",
         "complexity.go",
+        "credential_complexity.go",
         "dynamic_calculator.go",
         "simple_calculator.go",
     ],
@@ -27,6 +28,7 @@ go_library(
         "//vms/platformvm/stakeable",
         "//vms/platformvm/warp",
         "//vms/secp256k1fx",
+        "//vms/warpfx",
     ],
 )
 
@@ -36,13 +38,19 @@ go_test(
         "calculator_test.go",
         "complexity_test.go",
         "dynamic_calculator_test.go",
+        "warp_utxos_complexity_test.go",
     ],
     embed = [":fee"],
     deps = [
         "//codec",
         "//ids",
+        "//utils/constants",
+        "//utils/crypto/bls",
+        "//utils/crypto/bls/signer/localsigner",
         "//utils/crypto/secp256k1",
+        "//utils/set",
         "//utils/units",
+        "//utils/wrappers",
         "//vms/components/avax",
         "//vms/components/gas",
         "//vms/components/verify",
@@ -50,8 +58,10 @@ go_test(
         "//vms/platformvm/platform",
         "//vms/platformvm/signer",
         "//vms/platformvm/stakeable",
+        "//vms/platformvm/warp",
         "//vms/platformvm/warp/message",
         "//vms/secp256k1fx",
+        "//vms/warpfx",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -14,7 +14,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
-	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 )
 
 var (
@@ -42,7 +41,7 @@ type AddPermissionlessDelegatorTx struct {
 func (tx *AddPermissionlessDelegatorTx) InitCtx(ctx *snow.Context) {
 	tx.BaseTx.InitCtx(ctx)
 	for _, out := range tx.StakeOuts {
-		out.FxID = secp256k1fx.ID
+		out.FxID = outputFxID(out)
 		out.InitCtx(ctx)
 	}
 	tx.DelegationRewardsOwner.InitCtx(ctx)
